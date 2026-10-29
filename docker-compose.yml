@@ -1,6 +1,6 @@
 services:
   learn:
-    image: ghcr.io/OWNER/learnsomething:latest
+    image: ghcr.io/ezsky333/learnsomething:latest
     # 或者本地构建：
     # build: .
     container_name: learn

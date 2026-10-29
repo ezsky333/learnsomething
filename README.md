@@ -49,22 +49,21 @@ URL 里的条目 id 可能含中文，浏览器会把它百分号编码，所以
 
 ### 用 Docker（推荐）
 
-镜像发布在 **GitHub Packages**（`ghcr.io`），不在 Docker Hub。
+镜像发布在 **GitHub Packages**（`ghcr.io`），**公开可拉取**，无需登录。
 
 ```bash
-# 如果包是私有的，先登录（用 GitHub 用户名 + PAT，PAT 需 read:packages）
-echo <你的PAT> | docker login ghcr.io -u <你的GitHub用户名> --password-stdin
-
 docker run -d --name learn -p 8080:8080 \
   -e APP_PASSWORD='你的登录密码' \
   -e JWT_SECRET='openssl rand -base64 32 生成一串' \
   -v learn-data:/data \
-  ghcr.io/OWNER/learnsomething:latest
+  ghcr.io/ezsky333/learnsomething:latest
 ```
 
 打开 `http://localhost:8080`，输入 `APP_PASSWORD` 即可。
 
-> 镜像默认是私有的。想直接 `docker pull` 不用登录，去仓库 **Packages** 页面把包的可见性改成 public。
+镜像为多架构（`linux/amd64` + `linux/arm64`），Apple Silicon 和 ARM 服务器会拉到原生版本。
+
+可用标签：`latest`、`main`、`sha-xxxxxxx`、`v1.2.3`（打 tag 时）。
 
 ### 用 docker compose
 
