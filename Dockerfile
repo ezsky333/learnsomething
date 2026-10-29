@@ -11,7 +11,13 @@ RUN npm run build
 
 
 # ---------- 2. 后端构建 ----------
-FROM golang:1.26-alpine AS api
+# 关键：用 --platform=$BUILDPLATFORM 让这一层跑在「构建机自身架构」上，
+# 再靠 Go 的交叉编译产出目标架构二进制。
+# 因为 CGO_ENABLED=0，Go 不依赖 C 工具链，可以直接交叉编译；
+# 否则 arm64 会在 QEMU 模拟下编译 modernc.org/sqlite（体量极大），耗时以小时计。
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS api
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 WORKDIR /src
 
 # 内容抓取是构建前的一次性动作，产物已在仓库里（content/），
@@ -23,10 +29,13 @@ COPY . .
 COPY --from=web /src/web/dist ./web/dist
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
       -trimpath \
       -ldflags "-s -w -X learnsomething/internal/server.Version=${VERSION}" \
       -o /out/learn ./cmd/server
+
+# 交叉编译产物做一次架构自检，避免推错架构的镜像
+RUN test -f /out/learn && ls -lh /out/learn
 
 
 # ---------- 3. 运行时 ----------
