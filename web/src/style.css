@@ -1,0 +1,481 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * 设计令牌：@theme 里给的是「亮色」默认值，:.dark 覆盖成暗色。
+ * 组件只用语义类（bg-panel / text-fg / border-line），切主题时不用改任何组件。
+ */
+@theme {
+  --font-sans: 'Inter', -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, SFMono-Regular, Consolas,
+    'Liberation Mono', monospace;
+
+  /* 品牌色阶（两套主题共用） */
+  --color-brand-300: #7dd3fc;
+  --color-brand-400: #38bdf8;
+  --color-brand-500: #0ea5e9;
+  --color-brand-600: #0284c7;
+
+  --color-mint-400: #10b981;
+  --color-mint-500: #059669;
+  --color-amber-glow: #d97706;
+
+  /* --- 语义色（亮色） --- */
+  --color-app: #f5f7fb;
+  --color-panel: #ffffff;
+  --color-panel-soft: #eef1f7;
+  --color-panel-raise: #f8fafd;
+  --color-fg: #0d1626;
+  --color-fg-muted: #44536b;
+  --color-fg-dim: #78869b;
+  --color-line: #dde3ee;
+  --color-line-strong: #c8d1e0;
+  --color-accent: #0284c7;
+  --color-accent-fg: #ffffff;
+  --color-accent-soft: rgb(2 132 199 / 0.1);
+}
+
+/* ---------------- 亮色（默认） ---------------- */
+:root {
+  color-scheme: light;
+  --doc-max: 76ch;
+
+  --code-bg: #f7f9fd;
+  --code-fg: #1b2739;
+  --code-border: rgb(13 22 38 / 0.1);
+  --code-line: rgb(13 22 38 / 0.06);
+
+  --tok-comment: #8494ab;
+  --tok-punct: #64748b;
+  --tok-tag: #c2410c;
+  --tok-number: #b45309;
+  --tok-string: #15803d;
+  --tok-operator: #0369a1;
+  --tok-keyword: #7e22ce;
+  --tok-function: #1d4ed8;
+}
+
+/* ---------------- 暗色 ---------------- */
+.dark {
+  color-scheme: dark;
+
+  --color-app: #070a14;
+  --color-panel: #0d1322;
+  --color-panel-soft: #131b2d;
+  --color-panel-raise: #101828;
+  --color-fg: #eef3fb;
+  --color-fg-muted: #b3c0d4;
+  --color-fg-dim: #7d8ca4;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.18);
+  --color-accent: #38bdf8;
+  --color-accent-fg: #04121f;
+  --color-accent-soft: rgb(56 189 248 / 0.12);
+
+  --color-mint-400: #34d399;
+  --color-mint-500: #10b981;
+  --color-amber-glow: #fbbf24;
+
+  --code-bg: #060a14;
+  --code-fg: #d6e2f5;
+  --code-border: rgb(255 255 255 / 0.08);
+  --code-line: rgb(255 255 255 / 0.06);
+
+  --tok-comment: #5f7593;
+  --tok-punct: #8fa4bf;
+  --tok-tag: #f87171;
+  --tok-number: #fbbf24;
+  --tok-string: #86efac;
+  --tok-operator: #7dd3fc;
+  --tok-keyword: #c084fc;
+  --tok-function: #60a5fa;
+}
+
+@layer base {
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    background-color: var(--color-app);
+    color: var(--color-fg-muted);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 26%, transparent);
+    color: var(--color-fg);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--color-fg-dim);
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: 1rem;
+  }
+
+  .card-raise {
+    background-color: var(--color-panel-raise);
+    border: 1px solid var(--color-line);
+    border-radius: 0.75rem;
+  }
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-3 py-1.5
+      text-sm font-medium transition-colors;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    background-color: var(--color-accent);
+    color: var(--color-accent-fg);
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .btn-ghost {
+    color: var(--color-fg-dim);
+  }
+  .btn-ghost:hover {
+    background-color: var(--color-panel-soft);
+    color: var(--color-fg);
+  }
+  .btn-outline {
+    border: 1px solid var(--color-line-strong);
+    color: var(--color-fg-muted);
+  }
+  .btn-outline:hover {
+    background-color: var(--color-panel-soft);
+    color: var(--color-fg);
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium;
+  }
+
+  .field {
+    @apply w-full rounded-lg px-3 text-sm outline-none;
+    background-color: var(--color-panel-raise);
+    border: 1px solid var(--color-line-strong);
+    color: var(--color-fg);
+  }
+  .field::placeholder {
+    color: var(--color-fg-dim);
+  }
+  .field:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  }
+}
+
+/* ---------- 文章排版（抓取下来的 HTML 直接渲染） ---------- */
+.doc-body {
+  font-size: 15.5px;
+  line-height: 1.85;
+  color: var(--color-fg-muted);
+  word-break: break-word;
+  max-width: var(--doc-max);
+}
+.doc-body > * + * {
+  margin-top: 0.9em;
+}
+.doc-body h1,
+.doc-body h2,
+.doc-body h3,
+.doc-body h4 {
+  color: var(--color-fg);
+  font-weight: 650;
+  line-height: 1.35;
+  scroll-margin-top: 5rem;
+}
+.doc-body h1 {
+  font-size: 1.6rem;
+  margin-top: 0.4em;
+}
+.doc-body h2 {
+  font-size: 1.3rem;
+  margin-top: 1.4em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--color-line);
+}
+.doc-body h3 {
+  font-size: 1.08rem;
+  margin-top: 1.2em;
+}
+.doc-body h4 {
+  font-size: 1rem;
+}
+.doc-body p {
+  margin: 0;
+}
+.doc-body a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.doc-body a:hover {
+  text-decoration-color: var(--color-accent);
+}
+.doc-body strong {
+  color: var(--color-fg);
+  font-weight: 650;
+}
+.doc-body ul,
+.doc-body ol {
+  padding-left: 1.45em;
+}
+.doc-body ul {
+  list-style: disc;
+}
+.doc-body ol {
+  list-style: decimal;
+}
+.doc-body li {
+  margin-top: 0.35em;
+}
+.doc-body li > p {
+  display: inline;
+}
+.doc-body blockquote {
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-accent-soft);
+  padding: 0.55em 0.9em;
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+.doc-body blockquote p {
+  margin: 0;
+}
+.doc-body hr {
+  border: 0;
+  border-top: 1px dashed var(--color-line-strong);
+  margin: 1.5em 0;
+}
+
+/* 行内代码 */
+.doc-body :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  padding: 0.12em 0.38em;
+  border-radius: 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
+  white-space: nowrap;
+}
+
+/* 代码块 */
+.doc-body div[class*='language-'],
+.doc-body pre {
+  position: relative;
+}
+.doc-body pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 0.7rem;
+  padding: 0.95rem 1rem;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.65;
+  tab-size: 2;
+}
+.doc-body pre code {
+  font-family: var(--font-mono);
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--code-fg);
+  font-size: inherit;
+}
+.doc-body .line-numbers-mode pre {
+  padding-left: 3.4rem;
+}
+.doc-body .line-numbers-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2.6rem;
+  padding: 0.95rem 0;
+  text-align: right;
+  color: var(--color-fg-dim);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+  border-right: 1px solid var(--code-line);
+}
+
+/* 表格 */
+.doc-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  display: block;
+  overflow-x: auto;
+}
+.doc-body th,
+.doc-body td {
+  border: 1px solid var(--color-line-strong);
+  padding: 0.5em 0.7em;
+  text-align: left;
+  vertical-align: top;
+}
+.doc-body th {
+  background: var(--color-panel-soft);
+  color: var(--color-fg);
+  font-weight: 600;
+}
+.doc-body tbody tr:nth-child(2n) {
+  background: color-mix(in srgb, var(--color-panel-soft) 55%, transparent);
+}
+
+/* 图片 */
+.doc-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-line);
+  background: #fff;
+  cursor: zoom-in;
+  display: block;
+  margin-inline: auto;
+}
+.doc-body p[align='center'] img,
+.doc-body p[align='center'] {
+  margin-inline: auto;
+  text-align: center;
+}
+
+/* Prism token 配色（跟随主题） */
+.doc-body .token.comment,
+.doc-body .token.prolog,
+.doc-body .token.doctype,
+.doc-body .token.cdata {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.doc-body .token.punctuation {
+  color: var(--tok-punct);
+}
+.doc-body .token.property,
+.doc-body .token.tag,
+.doc-body .token.constant,
+.doc-body .token.symbol,
+.doc-body .token.deleted {
+  color: var(--tok-tag);
+}
+.doc-body .token.boolean,
+.doc-body .token.number,
+.doc-body .token.regex,
+.doc-body .token.important,
+.doc-body .token.variable,
+.doc-body .token.annotation {
+  color: var(--tok-number);
+}
+.doc-body .token.selector,
+.doc-body .token.attr-name,
+.doc-body .token.string,
+.doc-body .token.char,
+.doc-body .token.builtin,
+.doc-body .token.inserted {
+  color: var(--tok-string);
+}
+.doc-body .token.operator,
+.doc-body .token.entity,
+.doc-body .token.url {
+  color: var(--tok-operator);
+}
+.doc-body .token.atrule,
+.doc-body .token.attr-value,
+.doc-body .token.keyword {
+  color: var(--tok-keyword);
+}
+.doc-body .token.function,
+.doc-body .token.class-name {
+  color: var(--tok-function);
+}
+.doc-body .token.namespace {
+  opacity: 0.7;
+}
+
+/* 笔记 Markdown 的精简样式 */
+.note-md p {
+  margin: 0.35em 0;
+}
+.note-md ul,
+.note-md ol {
+  padding-left: 1.3em;
+  margin: 0.35em 0;
+}
+.note-md ul {
+  list-style: disc;
+}
+.note-md ol {
+  list-style: decimal;
+}
+.note-md code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+}
+.note-md strong {
+  color: var(--color-fg);
+}
+.note-md h3,
+.note-md h4,
+.note-md h5,
+.note-md h6 {
+  color: var(--color-fg);
+  font-weight: 600;
+  font-size: 0.95em;
+  margin: 0.5em 0 0.25em;
+}
+
+/* 进入动画 */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: rise 0.28s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise {
+    animation: none;
+  }
+}

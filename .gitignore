@@ -1,0 +1,26 @@
+# 依赖与构建产物
+node_modules/
+web/dist/*
+!web/dist/.gitkeep
+bin/
+*.exe
+*.test
+web/*.tsbuildinfo
+
+# 运行时数据（笔记/进度都在这，绝不要提交）
+data/
+data-test/
+log-*.txt
+
+# 一次性抓取的原始素材（约 570MB，可由 scripts 重新生成）
+_raw/
+_raw2/
+_rawimg/
+_tmp/
+_probe/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

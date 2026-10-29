@@ -1,0 +1,32 @@
+services:
+  learn:
+    image: ghcr.io/OWNER/learnsomething:latest
+    # 或者本地构建：
+    # build: .
+    container_name: learn
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    environment:
+      # 唯一登录密码，务必改成你自己的
+      APP_PASSWORD: 'change-me-please'
+      # 固定一个随机串，否则每次重启都要重新登录
+      # 生成：openssl rand -base64 32
+      JWT_SECRET: 'change-me-to-a-random-32-byte-string'
+      # 登录有效期（天）
+      TOKEN_TTL_DAYS: '30'
+      # 挂在 HTTPS 反向代理后面时设为 true
+      COOKIE_SECURE: 'false'
+      TZ: 'Asia/Shanghai'
+    volumes:
+      # 进度和笔记都在这个卷里，备份它就等于备份全部数据
+      - learn-data:/data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/healthz']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  learn-data:
