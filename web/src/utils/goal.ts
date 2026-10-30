@@ -75,7 +75,7 @@ export interface GoalProgress {
   modules: ModuleProgress[]
 }
 
-/** 单个模块（一篇文档 = 一个模块）的进度。 */
+/** 单个模块的进度。 */
 export interface ModuleProgress {
   slug: string
   title: string
@@ -94,6 +94,17 @@ export interface ModuleProgress {
   /** 该模块每天应完成多少条（按天数均摊，或从总日目标按占比分摊） */
   dailyTarget: number
   pace: PaceLevel
+  /** true 表示这是一行「内容库」汇总（算法/八股），不是单个文档 */
+  byLibrary?: boolean
+  /** 该库每天分配到的分钟数（时间窗模式下才有意义） */
+  minutesPerDay?: number
+}
+
+/** 内容库的中文名，用于按库聚合时的标题。 */
+export const LIBRARY_NAME: Record<string, string> = {
+  interview: '八股',
+  algo: '算法',
+  ai: '大模型',
 }
 
 /**
@@ -162,20 +173,92 @@ export function computeModuleProgress(
   }
 
   const out: ModuleProgress[] = []
+
+  // 时间窗模式：按「内容库」聚合，而不是按子模块。
+  //
+  // 理由很实际：计划本身是「上午学算法、下午学八股」这个粒度，
+  // 拆到「数组每天 0.2 条、链表每天 0.2 条」既没法执行，也没法判断进度 ——
+  // 人不会今天数着做「数组 0.2 条 + 链表 0.2 条」，真实行为是
+  // 「今天算法这 2 条，明天算法那 2 条」。
+  if (windows.length > 0) {
+    const byLib = new Map<string, { total: number; done: number; docs: DocMeta[] }>()
+    for (const doc of usable) {
+      const cur = byLib.get(doc.library) ?? { total: 0, done: 0, docs: [] }
+      cur.total += doc.questionCount
+      cur.done += Math.min(doneOf(doc.slug), doc.questionCount)
+      cur.docs.push(doc)
+      byLib.set(doc.library, cur)
+    }
+    for (const [library, agg] of byLib) {
+      const per = minutesOf(library)
+      const libMinutes = minutesForLib(library)
+      let daily: number
+      if (goal.dailyTarget > 0 && grandTotal > 0) {
+        // 自定总目标时按该库工作量占比分摊
+        const w = per > 0 ? agg.total * per : agg.total
+        daily = goal.dailyTarget * (w / grandTotal)
+      } else if (per > 0) {
+        // 时间窗模式：直接用该库在窗里能拿到的分钟数 ÷ 单条成本。
+        // 没有被任何窗包含时 libMinutes 为 0，额度也就是 0 ——
+        // 不能退回「按总天数均摊」，那等于凭空给自己安排了做不到的任务。
+        daily = libMinutes / per
+      } else if (totalDays > 0) {
+        daily = agg.total / totalDays
+      } else {
+        daily = 0
+      }
+
+      const total = agg.total
+      const done = agg.done
+      const expected = Math.min(total, daily * daysElapsed)
+      const ahead = done - expected
+      const remain = Math.max(0, Math.ceil(expected - done))
+      const percent = total > 0 ? Math.min(100, (done / total) * 100) : 0
+
+      let pace: PaceLevel
+      if (total > 0 && done >= total) pace = 'done'
+      else if (expired) pace = 'expired'
+      else {
+        const unit = daily || 1
+        if (ahead >= unit) pace = 'ahead'
+        else if (ahead >= -0.5 * unit) pace = 'onTrack'
+        else if (ahead >= -2 * unit) pace = 'slightlyBehind'
+        else pace = 'behind'
+      }
+
+      out.push({
+        slug: `lib:${library}`,
+        title: LIBRARY_NAME[library] ?? library,
+        group: goal.windows?.find((w) => w.libs.length === 0 || w.libs.includes(library))?.name ?? '',
+        library,
+        totalItems: total,
+        doneItems: done,
+        percent,
+        expectedDone: expected,
+        aheadBy: ahead,
+        todayRemaining: remain,
+        dailyTarget: daily,
+        pace,
+        byLibrary: true,
+        minutesPerDay: libMinutes,
+      })
+    }
+    // 算法在前、八股在后，和实际作息顺序一致
+    const order = ['algo', 'interview', 'ai']
+    out.sort((a, b) => order.indexOf(a.library) - order.indexOf(b.library))
+    return out
+  }
+
   for (const doc of usable) {
     const total = doc.questionCount
     const done = Math.min(doneOf(doc.slug), total)
     const per = minutesOf(doc.library)
     const weight = per > 0 ? total * per : total
 
-    // 每天的额度：有自定总目标时按工作量占比分摊，否则按这个库自己的时间预算
+    // 每天的额度：有自定总目标时按工作量占比分摊，否则按总时间预算分摊
     let daily: number
     if (goal.dailyTarget > 0 && grandTotal > 0) {
       daily = goal.dailyTarget * (weight / grandTotal)
-    } else if (per > 0 && windows.length > 0) {
-      // 时间窗模式：直接用该库在窗里能拿到的分钟数 ÷ 单条成本
-      const libMinutes = minutesForLib(doc.library)
-      daily = libMinutes > 0 ? libMinutes / per : 0
     } else if (per > 0 && goal.dailyMinutes > 0) {
       // 按时间预算反推：每天的时间先按工作量分给这个模块，再除以单条成本
       const shareMinutes = goal.dailyMinutes * (weight / (grandTotal || 1))

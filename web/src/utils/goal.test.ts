@@ -363,16 +363,25 @@ test('有时间窗时，各库额度按自己那段时间算，而不是全天�
   ]
   const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
 
-  const java = mods.find((m) => m.slug === 'java')!
-  const algo = mods.find((m) => m.slug === 'algo-array')!
+  // 时间窗模式按内容库聚合，slug 形如 lib:algo / lib:interview
+  const iv = mods.find((m) => m.slug === 'lib:interview')!
+  const algo = mods.find((m) => m.slug === 'lib:algo')!
 
   // 算法：100 / 25 = 4 条/天
   if (Math.abs(algo.dailyTarget - 4) > 0.01) {
     throw new Error(`算法应每天 4 条，实际 ${algo.dailyTarget}`)
   }
   // 八股：90 / 5 = 18 条/天
-  if (Math.abs(java.dailyTarget - 18) > 0.01) {
-    throw new Error(`八股应每天 18 条，实际 ${java.dailyTarget}`)
+  if (Math.abs(iv.dailyTarget - 18) > 0.01) {
+    throw new Error(`八股应每天 18 条，实际 ${iv.dailyTarget}`)
+  }
+  // 汇总后只有两行（算法 + 八股），不该再拆子模块
+  if (mods.length !== 2) {
+    throw new Error(`按库聚合应只有 2 行，实际 ${mods.length}`)
+  }
+  // 行标题是人话，不是 slug
+  if (algo.title !== '算法' || iv.title !== '八股') {
+    throw new Error(`标题应可读：${algo.title} / ${iv.title}`)
   }
 })
 
@@ -397,8 +406,14 @@ test('时间窗里某库没被任何窗包含时，额度为 0（不该瞎分）
     { name: 'evening', minutes: 90, libs: ['interview'], reviewOnly: false },
   ]
   const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
-  const algo = mods.find((m) => m.slug === 'algo-array')!
+  const algo = mods.find((m) => m.slug === 'lib:algo')
+  if (!algo) {
+    throw new Error('算法库仍应出现在列表里（额度为 0），而不是消失')
+  }
   if (algo.dailyTarget !== 0) {
     throw new Error(`算法没有时间窗，额度应为 0，实际 ${algo.dailyTarget}`)
+  }
+  if (algo.minutesPerDay !== 0) {
+    throw new Error(`算法没有时间窗，分钟数应为 0，实际 ${algo.minutesPerDay}`)
   }
 })

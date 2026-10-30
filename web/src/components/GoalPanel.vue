@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useContentStore, useStudyStore } from '@/stores'
 import { computeGoalProgress, daysBetween, formatDay, paceOf, today } from '@/utils/goal'
@@ -421,9 +421,11 @@ function modulePaceText(m: ModuleProgress): string {
         <span v-if="progress.doneToday > 0">· 今天已完成 {{ progress.doneToday }} 条</span>
       </p>
 
-      <!-- 分模块进度：每个模块单独算「今天到哪儿、差多少」 -->
+      <!-- 进度：按内容库聚合（时间窗模式下）或按模块（普通模式） -->
       <div v-if="progress.modules.length" class="mt-4 border-t border-line pt-3">
-        <p class="mb-2 text-[11px] font-medium text-fg-muted">分模块进度</p>
+        <p class="mb-2 text-[11px] font-medium text-fg-muted">
+          {{ progress.modules[0]?.byLibrary ? '进度（按内容库）' : '分模块进度' }}
+        </p>
         <div class="space-y-2.5">
           <div v-for="m in progress.modules" :key="m.slug">
             <div class="flex items-baseline gap-2">
@@ -437,7 +439,7 @@ function modulePaceText(m: ModuleProgress): string {
                 {{ Math.round(m.doneItems) }}/{{ m.totalItems }}
               </span>
             </div>
-            <!-- 每模块一条双刻度进度条 -->
+            <!-- 每行一条双刻度进度条 -->
             <div class="relative mt-1">
               <div class="h-1.5 w-full overflow-hidden rounded-full bg-line">
                 <div
@@ -457,7 +459,12 @@ function modulePaceText(m: ModuleProgress): string {
               今天应到 {{ Math.ceil(m.expectedDone) }} 条
               <span v-if="m.todayRemaining > 0" class="text-amber-glow">· 还差 {{ m.todayRemaining }} 条</span>
               <span v-else class="text-mint-500 dark:text-mint-400">· 已达标</span>
-              <span class="text-fg-dim/70">（每天 {{ m.dailyTarget.toFixed(1) }} 条）</span>
+              <span class="text-fg-dim/70">
+                （每天 {{ m.dailyTarget.toFixed(1) }} 条<template
+                  v-if="m.minutesPerDay"
+                >，{{ m.minutesPerDay }} 分钟</template
+                >）
+              </span>
             </p>
           </div>
         </div>
