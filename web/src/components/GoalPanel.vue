@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useContentStore, useStudyStore } from '@/stores'
 import { computeGoalProgress, daysBetween, formatDay, paceOf, today } from '@/utils/goal'
 import type { ModuleProgress, PaceLevel } from '@/utils/goal'
@@ -261,6 +261,38 @@ const progress = computed(() =>
 
 const pace = computed(() => paceOf(progress.value))
 
+/**
+ * 今天该学多少，来自服务端的逐日排期。
+ *
+ * 为什么不能自己用「时间 ÷ 单条成本」算：那是「时间全部用来学新的」的理论值，
+ * 而实际每天要先还复习债。算法上午 100 分钟理论能学 4 条，
+ * 但有复习的日子实际只学 1~2 条 —— 两块面板必须给同一个答案。
+ */
+const todayByLib = computed<Record<string, { newItems: number; reviewItems: number }>>(() => {
+  const out: Record<string, { newItems: number; reviewItems: number }> = {}
+  const plan = study.studyPlan?.plan
+  if (!plan || !plan.days.length) return out
+  const todayStr = today()
+  const day = plan.days.find((d) => d.day === todayStr) ?? plan.days[0]
+  for (const [lib, n] of Object.entries(day.new ?? {})) {
+    out[lib] = out[lib] ?? { newItems: 0, reviewItems: 0 }
+    out[lib].newItems = n
+  }
+  for (const [lib, n] of Object.entries(day.review ?? {})) {
+    out[lib] = out[lib] ?? { newItems: 0, reviewItems: 0 }
+    out[lib].reviewItems = n
+  }
+  return out
+})
+
+onMounted(async () => {
+  try {
+    await study.refreshStudyPlan()
+  } catch {
+    // 推算失败不影响任务面板的主要信息
+  }
+})
+
 const paceText = computed(() => {
   const p = progress.value
   if (pace.value === 'none') return '还没设置学习任务'
@@ -456,15 +488,25 @@ function modulePaceText(m: ModuleProgress): string {
               />
             </div>
             <p class="mt-0.5 text-[10px] text-fg-dim">
-              今天应到 {{ Math.ceil(m.expectedDone) }} 条
-              <span v-if="m.todayRemaining > 0" class="text-amber-glow">· 还差 {{ m.todayRemaining }} 条</span>
-              <span v-else class="text-mint-500 dark:text-mint-400">· 已达标</span>
-              <span class="text-fg-dim/70">
-                （每天 {{ m.dailyTarget.toFixed(1) }} 条<template
-                  v-if="m.minutesPerDay"
-                >，{{ m.minutesPerDay }} 分钟</template
-                >）
-              </span>
+              <template v-if="m.byLibrary && todayByLib[m.library]">
+                今天该学
+                <span class="font-medium text-fg-muted">{{ todayByLib[m.library].newItems }}</span> 条
+                <span v-if="todayByLib[m.library].reviewItems > 0" class="text-fg-dim/80">
+                  · 复习 {{ todayByLib[m.library].reviewItems }} 条
+                </span>
+                <span class="text-fg-dim/60">（{{ m.minutesPerDay }} 分钟）</span>
+              </template>
+              <template v-else>
+                今天应到 {{ Math.ceil(m.expectedDone) }} 条
+                <span v-if="m.todayRemaining > 0" class="text-amber-glow">· 还差 {{ m.todayRemaining }} 条</span>
+                <span v-else class="text-mint-500 dark:text-mint-400">· 已达标</span>
+                <span class="text-fg-dim/70">
+                  （每天 {{ m.dailyTarget.toFixed(1) }} 条<template
+                    v-if="m.minutesPerDay"
+                  >，{{ m.minutesPerDay }} 分钟</template
+                  >）
+                </span>
+              </template>
             </p>
           </div>
         </div>

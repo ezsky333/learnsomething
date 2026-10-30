@@ -389,6 +389,20 @@ export const useStudyStore = defineStore('study', () => {
     return res
   }
 
+  /**
+   * 最近一次推算出的学习计划。
+   *
+   * 放在 store 里共享：学习任务面板和计划推算面板都要用。
+   * 「今天该学多少」必须来自同一份逐日排期，否则两块面板会给出
+   * 互相矛盾的数字（一个说 4.0 条、一个说 2.0 条），用户无法判断该信谁。
+   */
+  const studyPlan = ref<StudyPlanResponse | null>(null)
+
+  async function refreshStudyPlan() {
+    studyPlan.value = await api.getFresh<StudyPlanResponse>('/api/plan')
+    return studyPlan.value
+  }
+
   // ---------- 学习任务 ----------
 
   async function saveGoal(input: {
@@ -452,6 +466,8 @@ export const useStudyStore = defineStore('study', () => {
     resetReview,
     clearReviews,
     backfillReviews,
+    studyPlan,
+    refreshStudyPlan,
   }
 })
 

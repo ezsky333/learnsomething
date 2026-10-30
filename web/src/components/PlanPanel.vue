@@ -27,7 +27,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await study.loadStudyPlan()
+    data.value = await study.refreshStudyPlan()
   } catch (e) {
     error.value = e instanceof Error ? e.message : '计划推算失败'
   } finally {
