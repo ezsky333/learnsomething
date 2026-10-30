@@ -350,3 +350,55 @@ test('每日分钟数越多，两个库的每日条数都随之上升', () => {
     throw new Error(`时间翻倍应让两库都加速：java ${jl.toFixed(1)}→${jh.toFixed(1)}, algo ${al.toFixed(1)}→${ah.toFixed(1)}`)
   }
 })
+
+// ---------- 时间窗下的分模块额度 ----------
+
+test('有时间窗时，各库额度按自己那段时间算，而不是全天平摊', () => {
+  const docs = [docLib('java', 79, 'interview'), docLib('algo-array', 9, 'algo')]
+  const g = goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(30), 190)
+  // 上午 100 分钟只给算法，下午 90 分钟给八股
+  g.windows = [
+    { name: 'morning', minutes: 100, libs: ['algo'], reviewOnly: false },
+    { name: 'evening', minutes: 90, libs: ['interview'], reviewOnly: false },
+  ]
+  const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
+
+  const java = mods.find((m) => m.slug === 'java')!
+  const algo = mods.find((m) => m.slug === 'algo-array')!
+
+  // 算法：100 / 25 = 4 条/天
+  if (Math.abs(algo.dailyTarget - 4) > 0.01) {
+    throw new Error(`算法应每天 4 条，实际 ${algo.dailyTarget}`)
+  }
+  // 八股：90 / 5 = 18 条/天
+  if (Math.abs(java.dailyTarget - 18) > 0.01) {
+    throw new Error(`八股应每天 18 条，实际 ${java.dailyTarget}`)
+  }
+})
+
+test('没有时间窗时退回按工作量分摊（行为不变）', () => {
+  const docs = [docLib('java', 79, 'interview'), docLib('algo-array', 9, 'algo')]
+  const g = goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(30), 120)
+  g.windows = []
+  const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
+  const java = mods.find((m) => m.slug === 'java')!
+  const algo = mods.find((m) => m.slug === 'algo-array')!
+  // 八股权重 395、算法 225，总 620 → 八股 76.5 分钟/天 → 15.3 条
+  if (!(java.dailyTarget > algo.dailyTarget)) {
+    throw new Error('八股仍应快于算法')
+  }
+})
+
+test('时间窗里某库没被任何窗包含时，额度为 0（不该瞎分）', () => {
+  const docs = [docLib('java', 79, 'interview'), docLib('algo-array', 9, 'algo')]
+  const g = goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(30), 90)
+  // 只有八股有窗，算法没分配时间
+  g.windows = [
+    { name: 'evening', minutes: 90, libs: ['interview'], reviewOnly: false },
+  ]
+  const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
+  const algo = mods.find((m) => m.slug === 'algo-array')!
+  if (algo.dailyTarget !== 0) {
+    throw new Error(`算法没有时间窗，额度应为 0，实际 ${algo.dailyTarget}`)
+  }
+})

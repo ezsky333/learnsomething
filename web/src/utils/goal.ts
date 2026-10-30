@@ -140,6 +140,27 @@ export function computeModuleProgress(
     return sum + (w > 0 ? d.questionCount * w : d.questionCount)
   }, 0)
 
+  /**
+   * 某个库每天可用的分钟数。
+   *
+   * 配置了时间窗时不能用「全天总时间」再去按权重分摊 —— 算法只能用上午那段，
+   * 八股只能用下午那段。否则会算出「算法每天 0.2 条」这种明显不对的数字
+   * （和计划推算面板的「每天 2.0 条」自相矛盾）。
+   */
+  const windows = goal.windows ?? []
+  const minutesForLib = (library: string): number => {
+    if (windows.length === 0) return 0 // 没有时间窗时走「按工作量分摊」的老路
+    let sum = 0
+    let matched = false
+    for (const w of windows) {
+      // 窗限定了库列表时，只有列出的库能用这个窗
+      if (w.libs.length > 0 && !w.libs.includes(library)) continue
+      matched = true
+      sum += w.minutes
+    }
+    return matched ? sum : 0
+  }
+
   const out: ModuleProgress[] = []
   for (const doc of usable) {
     const total = doc.questionCount
@@ -147,10 +168,14 @@ export function computeModuleProgress(
     const per = minutesOf(doc.library)
     const weight = per > 0 ? total * per : total
 
-    // 每天的额度：有自定总目标时按工作量占比分摊，否则本模块自身均摊
+    // 每天的额度：有自定总目标时按工作量占比分摊，否则按这个库自己的时间预算
     let daily: number
     if (goal.dailyTarget > 0 && grandTotal > 0) {
       daily = goal.dailyTarget * (weight / grandTotal)
+    } else if (per > 0 && windows.length > 0) {
+      // 时间窗模式：直接用该库在窗里能拿到的分钟数 ÷ 单条成本
+      const libMinutes = minutesForLib(doc.library)
+      daily = libMinutes > 0 ? libMinutes / per : 0
     } else if (per > 0 && goal.dailyMinutes > 0) {
       // 按时间预算反推：每天的时间先按工作量分给这个模块，再除以单条成本
       const shareMinutes = goal.dailyMinutes * (weight / (grandTotal || 1))
