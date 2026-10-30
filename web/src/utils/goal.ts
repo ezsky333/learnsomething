@@ -103,13 +103,19 @@ export interface ModuleProgress {
  * 只给一个总数会掩盖这种差异，所以每个模块都要能单独回答
  * 「今天我这一块应该学到哪儿、差多少」。
  *
- * @param splitDaily 为 true 时，把「每日总目标」按条数占比分摊到各模块；
- *                   否则每个模块各自用「自身条数 / 总天数」算。
+ * 关键：**不同内容库的速度天然不同**。算法一篇长文 25 分钟，八股一道题 5 分钟，
+ * 用「总条数 / 总天数」平摊会让两边都失真 —— 八股显得学不完，算法显得随便。
+ * 所以这里按「每条的分钟数」把总量折算成加权工作量，再按权重分摊每日额度。
+ *
+ * @param minutesPerItem 各库学一条的分钟数；缺省时各库等权。
+ * @param splitDaily 为 true 时，把「每日总目标」按工作量占比分摊到各模块；
+ *                   否则每个模块各自用「自身工作量 / 总天数」算。
  */
 export function computeModuleProgress(
   goal: Goal | null,
   docs: DocMeta[],
   doneOf: (docSlug: string) => number,
+  minutesPerItem?: Record<string, number>,
 ): ModuleProgress[] {
   if (!goal) return []
 
@@ -120,21 +126,35 @@ export function computeModuleProgress(
   const daysElapsed = Math.min(Math.max(rawElapsed, 0), totalDays)
   const expired = daysBetween(todayStr, goal.dueDay) < 0
 
-  // 先算出参与统计的模块，以及总条数（用于按占比分摊自定目标）
+  const minutesOf = (library: string) => {
+    const m = minutesPerItem?.[library]
+    return m && m > 0 ? m : 0
+  }
+
+  // 先算出参与统计的模块，以及总工作量（用于按占比分摊自定目标）
   const usable = goal.docSlugs
     .map((s) => bySlug.get(s))
     .filter((d): d is DocMeta => !!d && !d.readingList)
-  const grandTotal = usable.reduce((sum, d) => sum + d.questionCount, 0)
+  const grandTotal = usable.reduce((sum, d) => {
+    const w = minutesOf(d.library)
+    return sum + (w > 0 ? d.questionCount * w : d.questionCount)
+  }, 0)
 
   const out: ModuleProgress[] = []
   for (const doc of usable) {
     const total = doc.questionCount
     const done = Math.min(doneOf(doc.slug), total)
+    const per = minutesOf(doc.library)
+    const weight = per > 0 ? total * per : total
 
-    // 每天的额度：有自定总目标时按条数占比分摊，否则本模块自身均摊
+    // 每天的额度：有自定总目标时按工作量占比分摊，否则本模块自身均摊
     let daily: number
     if (goal.dailyTarget > 0 && grandTotal > 0) {
-      daily = goal.dailyTarget * (total / grandTotal)
+      daily = goal.dailyTarget * (weight / grandTotal)
+    } else if (per > 0 && goal.dailyMinutes > 0) {
+      // 按时间预算反推：每天的时间先按工作量分给这个模块，再除以单条成本
+      const shareMinutes = goal.dailyMinutes * (weight / (grandTotal || 1))
+      daily = shareMinutes / per
     } else {
       daily = total / totalDays
     }
@@ -196,15 +216,16 @@ export function paceOf(g: GoalProgress): PaceLevel {
  * @param docs      内容库全量元信息（用来查每个模块的条数）
  * @param doneOf    给定 docSlug 返回该模块已完成条数
  * @param doneTodayOf 给定 docSlug 返回该模块今天完成的条数（可选）
+ * @param minutesPerItem 各库学一条的分钟数，用于按真实成本分摊（可选）
  */
 export function computeGoalProgress(
   goal: Goal | null,
   docs: DocMeta[],
   doneOf: (docSlug: string) => number,
   doneTodayOf?: (docSlug: string) => number,
+  minutesPerItem?: Record<string, number>,
 ): GoalProgress {
-  const empty: GoalProgress = {
-    hasGoal: false,
+  const empty: GoalProgress = {    hasGoal: false,
     expired: false,
     totalItems: 0,
     doneItems: 0,
@@ -250,7 +271,11 @@ export function computeGoalProgress(
   // 剩余天数（含今天）。过期后必须为 0，不能再减出正数。
   const daysLeft = expired ? 0 : Math.max(1, totalDays - daysElapsed + 1)
 
-  // 每天应完成：用户自定优先，否则按总天数均摊
+  // 每天应完成的条数。
+  //
+  // 混库时这个数字本身意义有限（算法一条 25 分钟、八股 5 分钟），
+  // 它只用于「实际 vs 应有」的对比，所以按条数均摊即可 ——
+  // 真正指导做题的分库速度在 modules 里，由各模块自己的时间成本算出。
   const auto = totalItems / totalDays
   const dailyTarget = goal.dailyTarget > 0 ? goal.dailyTarget : auto
 
@@ -287,6 +312,6 @@ export function computeGoalProgress(
     doneToday,
     projectedEndDay,
     expectedPercent,
-    modules: computeModuleProgress(goal, docs, doneOf),
+    modules: computeModuleProgress(goal, docs, doneOf, minutesPerItem),
   }
 }

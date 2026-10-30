@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -40,20 +42,29 @@ type Note struct {
 	CreatedDy string `json:"createdDay"`
 }
 
-// Goal 是学习任务：选中的模块 + 截止日期。
+// Goal 是学习任务：选中的模块 + 截止日期 + 每天的可用时间。
 //
-// 只维护一个当前目标（单用户场景，简单可靠）。「每天该学多少」由前端
-// 用「选中模块的总条数 / 剩余天数」推导，不落库，避免和实际进度不同步。
+// 「每天该学多少」不落库，由服务端按时间预算逐日推算 —— 因为学习和复习
+// 争抢同一份时间，静态的「总量/天数」无法反映「后期复习变重、能学的新内容变少」
+// 这条曲线。
 type Goal struct {
 	// DocSlugs 是勾选要学的模块（一个 doc = 一个模块，算法专题也算模块）。
 	DocSlugs []string `json:"docSlugs"`
 	// StartDay / DueDay 都是本地日期 YYYY-MM-DD。
 	StartDay string `json:"startDay"`
 	DueDay   string `json:"dueDay"`
-	// DailyTarget 是用户自定的每日目标；0 表示按剩余天数自动均摊。
-	DailyTarget int    `json:"dailyTarget"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	// DailyTarget 是用户自定的每日目标条数；0 表示按时间预算自动推算。
+	// 保留它是为了兼容旧数据，新逻辑以 DailyMinutes 为准。
+	DailyTarget int `json:"dailyTarget"`
+	// DailyMinutes 是每天能投入的分钟数 —— 计划推算的核心输入。
+	DailyMinutes int `json:"dailyMinutes"`
+	// RestDays 是停滯日（一次性），WeeklyRest 是每周固定休息（0=周日…6=周六）。
+	RestDays   []string `json:"restDays"`
+	WeeklyRest []int    `json:"weeklyRest"`
+	// MinutesPerItem 是各库「学一条」的分钟数，算法与八股差异很大，必须分开。
+	MinutesPerItem map[string]int `json:"minutesPerItem"`
+	CreatedAt      string         `json:"createdAt"`
+	UpdatedAt      string         `json:"updatedAt"`
 }
 
 // Snapshot 是一次全量同步的载荷。
@@ -61,11 +72,18 @@ type Snapshot struct {
 	Progress []Progress `json:"progress"`
 	Notes    []Note     `json:"notes"`
 	Goal     *Goal      `json:"goal"`
-	Revision string     `json:"revision"`
+	// Review 只带在籍（未毕业）的复习状态，前端用它标注「下次复习 X 天后」。
+	Review   []ReviewItem `json:"review"`
+	Revision string       `json:"revision"`
 }
 
 type Store struct {
 	db *sql.DB
+
+	// docLib 是 docID → 内容库的映射，由 server 启动时注入，
+	// 用于给不同库分配不同的复习额度（算法一条要十几分钟，八股几分钟）。
+	libMu  sync.RWMutex
+	docLib map[string]string
 }
 
 // Open 打开（必要时创建）SQLite 数据库。
@@ -81,7 +99,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // sqlite 单写者，串行化最省心
-	s := &Store{db: db}
+	s := &Store{db: db, docLib: map[string]string{}}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -118,6 +136,36 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- 复习计划：一条内容一行，标记「已掌握」时自动入列。
+CREATE TABLE IF NOT EXISTS review (
+  doc_id       TEXT    NOT NULL,
+  item_id      TEXT    NOT NULL,
+  stage        INTEGER NOT NULL DEFAULT 0,
+  lapses       INTEGER NOT NULL DEFAULT 0,
+  review_count INTEGER NOT NULL DEFAULT 0,
+  last_day     TEXT    NOT NULL DEFAULT '',
+  due_day      TEXT    NOT NULL DEFAULT '',
+  last_grade   INTEGER NOT NULL DEFAULT -1,
+  graduated    INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT    NOT NULL,
+  updated_at   TEXT    NOT NULL,
+  PRIMARY KEY (doc_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_review_due ON review(graduated, due_day);
+
+-- 复习流水：只记真正做过评分的，顺延不算。
+CREATE TABLE IF NOT EXISTS review_log (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id       TEXT    NOT NULL,
+  item_id      TEXT    NOT NULL,
+  grade        INTEGER NOT NULL,
+  day          TEXT    NOT NULL,
+  stage_before INTEGER NOT NULL,
+  stage_after  INTEGER NOT NULL,
+  created_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_log_day ON review_log(day);
 `)
 	return err
 }
@@ -141,13 +189,23 @@ func (s *Store) SetMeta(key, value string) error {
 
 // Snapshot 读出全部进度与笔记。
 func (s *Store) Snapshot() (Snapshot, error) {
-	snap := Snapshot{Progress: []Progress{}, Notes: []Note{}}
+	snap := Snapshot{Progress: []Progress{}, Notes: []Note{}, Review: []ReviewItem{}}
 
 	goal, err := s.GetGoal()
 	if err != nil {
 		return snap, err
 	}
 	snap.Goal = goal
+
+	review, err := s.ActiveReviews()
+	if err != nil {
+		return snap, err
+	}
+	today := time.Now().Format(dayLayout)
+	for i := range review {
+		review[i].finalize(today)
+	}
+	snap.Review = review
 
 	rows, err := s.db.Query(`SELECT doc_id, item_id, status, starred, updated_at, done_day
 		FROM progress ORDER BY doc_id, item_id`)
@@ -216,6 +274,10 @@ func (s *Store) SetProgress(docID, itemID string, status int, starred *bool, day
 
 	if cur.Status == StatusUnread && !cur.Starred && cur.DoneDay == "" {
 		_, err = s.db.Exec(`DELETE FROM progress WHERE doc_id = ? AND item_id = ?`, docID, itemID)
+		if err == nil {
+			// 不再是「已掌握」就不该再占用复习额度。
+			err = s.DropReview(docID, itemID)
+		}
 		return cur, err
 	}
 
@@ -227,6 +289,17 @@ func (s *Store) SetProgress(docID, itemID string, status int, starred *bool, day
 			updated_at = excluded.updated_at,
 			done_day = excluded.done_day`,
 		docID, itemID, cur.Status, boolToInt(cur.Starred), cur.UpdatedAt, cur.DoneDay)
+	if err != nil {
+		return cur, err
+	}
+
+	// 标记「已掌握」即自动进入复习计划；撤销则移出。
+	// 已经复习过的内容重复标记是幂等的，不会把进度打回原点。
+	if cur.Status == StatusDone {
+		err = s.EnrollReview(docID, itemID, cur.DoneDay)
+	} else {
+		err = s.DropReview(docID, itemID)
+	}
 	return cur, err
 }
 
@@ -275,6 +348,28 @@ func (s *Store) DeleteNote(id int64) error {
 	return nil
 }
 
+// DoneCountByDoc 统计每篇文档已掌握的条数。
+//
+// 计划推算要知道「真实还剩多少」，这个数只能从 progress 表来。
+func (s *Store) DoneCountByDoc() (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT doc_id, COUNT(*) FROM progress
+		WHERE status = ? GROUP BY doc_id`, StatusDone)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var doc string
+		var n int
+		if err := rows.Scan(&doc, &n); err != nil {
+			return nil, err
+		}
+		out[doc] = n
+	}
+	return out, rows.Err()
+}
+
 // ErrNotFound 表示记录不存在。
 var ErrNotFound = errors.New("记录不存在")
 
@@ -321,6 +416,34 @@ func (s *Store) SetGoal(g Goal) (*Goal, error) {
 		dedup = append(dedup, slug)
 	}
 	g.DocSlugs = dedup
+
+	// 停滞日去重排序，保持稳定输出
+	if len(g.RestDays) > 0 {
+		seenDay := make(map[string]bool, len(g.RestDays))
+		days := make([]string, 0, len(g.RestDays))
+		for _, d := range g.RestDays {
+			if d == "" || seenDay[d] {
+				continue
+			}
+			seenDay[d] = true
+			days = append(days, d)
+		}
+		sort.Strings(days)
+		g.RestDays = days
+	}
+	if len(g.WeeklyRest) > 0 {
+		seenW := make(map[int]bool, len(g.WeeklyRest))
+		ws := make([]int, 0, len(g.WeeklyRest))
+		for _, w := range g.WeeklyRest {
+			if w < 0 || w > 6 || seenW[w] {
+				continue
+			}
+			seenW[w] = true
+			ws = append(ws, w)
+		}
+		sort.Ints(ws)
+		g.WeeklyRest = ws
+	}
 
 	raw, err := json.Marshal(g)
 	if err != nil {

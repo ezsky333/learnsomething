@@ -29,6 +29,12 @@ const router = createRouter({
       meta: { title: '我的笔记' },
     },
     {
+      path: '/review',
+      name: 'review',
+      component: () => import('@/views/ReviewView.vue'),
+      meta: { title: '今日复习' },
+    },
+    {
       path: '/:pathMatch(.*)*',
       name: 'notfound',
       component: () => import('@/views/NotFoundView.vue'),

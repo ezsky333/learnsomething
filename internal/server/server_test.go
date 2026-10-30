@@ -371,3 +371,207 @@ func TestLoginRateLimit(t *testing.T) {
 		t.Fatalf("连续失败后应 429，实际 %d", w.Code)
 	}
 }
+
+// ---------- 复习计划接口 ----------
+
+func TestReviewPlanAndGrade(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	// 标记掌握 → 自动进入复习计划
+	if w := do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":2}`, cookie); w.Code != http.StatusOK {
+		t.Fatalf("标记掌握失败: %d %s", w.Code, w.Body.String())
+	}
+
+	w := do(t, h, "GET", "/api/review", "", cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("读取复习计划失败: %d %s", w.Code, w.Body.String())
+	}
+	var plan store.ReviewPlan
+	if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Day == "" || plan.Cap <= 0 {
+		t.Fatalf("计划基本字段缺失: %+v", plan)
+	}
+	if plan.Enrolled != 1 {
+		t.Fatalf("应有 1 条在籍，实际 %d", plan.Enrolled)
+	}
+	// 刚掌握的内容首复习排在次日，今天不该到期
+	if plan.DueTotal != 0 {
+		t.Fatalf("今天不该有到期内容，实际 %d", plan.DueTotal)
+	}
+	if plan.NextDueDay == "" {
+		t.Fatal("应给出下次复习日提示")
+	}
+	if len(plan.Forecast) != 14 {
+		t.Fatalf("应预测 14 天，实际 %d", len(plan.Forecast))
+	}
+	if plan.Stages < 3 {
+		t.Fatalf("应有至少 3 轮复习，实际 %d", plan.Stages)
+	}
+
+	// 指定 day 参数：直接看次日，应该能看到它
+	next := plan.NextDueDay
+	w = do(t, h, "GET", "/api/review?day="+next, "", cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("指定日期查询失败: %d", w.Code)
+	}
+	plan2 := store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan2)
+	if plan2.DueTotal != 1 {
+		t.Fatalf("%s 应有 1 条到期，实际 %d", next, plan2.DueTotal)
+	}
+	if len(plan2.Queue) != 1 || plan2.Queue[0].ItemID != "q1" {
+		t.Fatalf("队列表内容不对: %+v", plan2.Queue)
+	}
+
+	// 评分「记住」→ 进入下一阶段
+	w = do(t, h, "POST", "/api/review/grade", `{"docId":"java","itemId":"q1","grade":2}`, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("评分失败: %d %s", w.Code, w.Body.String())
+	}
+	var it store.ReviewItem
+	if err := json.Unmarshal(w.Body.Bytes(), &it); err != nil {
+		t.Fatal(err)
+	}
+	if it.Stage != 1 || it.ReviewCount != 1 {
+		t.Fatalf("评分后状态不对: %+v", it)
+	}
+	if it.DueDay == "" {
+		t.Fatal("评分后应排出下次复习日")
+	}
+
+	// 不存在的条目应 404
+	if w := do(t, h, "POST", "/api/review/grade", `{"docId":"x","itemId":"y","grade":2}`, cookie); w.Code != http.StatusNotFound {
+		t.Fatalf("不存在的条目应 404，实际 %d", w.Code)
+	}
+	// 非法 grade
+	for _, g := range []string{"-1", "4", "99"} {
+		body := `{"docId":"java","itemId":"q1","grade":` + g + `}`
+		if w := do(t, h, "POST", "/api/review/grade", body, cookie); w.Code != http.StatusBadRequest {
+			t.Fatalf("grade=%s 应 400，实际 %d", g, w.Code)
+		}
+	}
+	// 缺字段
+	if w := do(t, h, "POST", "/api/review/grade", `{"grade":2}`, cookie); w.Code != http.StatusBadRequest {
+		t.Fatalf("缺 docId 应 400，实际 %d", w.Code)
+	}
+}
+
+func TestReviewDailyCapAPI(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	// 设置上限
+	w := do(t, h, "PUT", "/api/review/config", `{"dailyCap":15,"enabled":true}`, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("保存复习设置失败: %d %s", w.Code, w.Body.String())
+	}
+	var cfg store.ReviewConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DailyCap != 15 || !cfg.Enabled {
+		t.Fatalf("设置结果不对: %+v", cfg)
+	}
+
+	// 校验
+	for _, body := range []string{
+		`{"dailyCap":0,"enabled":true}`,
+		`{"dailyCap":-3,"enabled":true}`,
+		`{"dailyCap":501,"enabled":true}`,
+	} {
+		if w := do(t, h, "PUT", "/api/review/config", body, cookie); w.Code != http.StatusBadRequest {
+			t.Fatalf("非法设置 %s 应 400，实际 %d", body, w.Code)
+		}
+	}
+
+	// 计划里的 cap 应反映设置
+	w = do(t, h, "GET", "/api/review", "", cookie)
+	plan := store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if plan.Cap != 15 {
+		t.Fatalf("计划里 cap 应为 15，实际 %d", plan.Cap)
+	}
+
+	// 关掉之后不应再入列
+	do(t, h, "PUT", "/api/review/config", `{"dailyCap":15,"enabled":false}`, cookie)
+	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q9","status":2}`, cookie)
+	w = do(t, h, "GET", "/api/review", "", cookie)
+	plan = store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if plan.Enrolled != 0 {
+		t.Fatalf("关闭后不该有在籍内容，实际 %d", plan.Enrolled)
+	}
+}
+
+func TestReviewUndoneRemovesFromPlan(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":2}`, cookie)
+	w := do(t, h, "GET", "/api/review", "", cookie)
+	plan := store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if plan.Enrolled != 1 {
+		t.Fatalf("应有 1 条在籍，实际 %d", plan.Enrolled)
+	}
+
+	// 撤销已掌握 → 移出复习计划
+	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":0}`, cookie)
+	w = do(t, h, "GET", "/api/review", "", cookie)
+	plan = store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if plan.Enrolled != 0 {
+		t.Fatalf("撤销后不该再有在籍内容，实际 %d", plan.Enrolled)
+	}
+}
+
+func TestReviewResetAndClear(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":2}`, cookie)
+	// 推进两轮
+	for i := 0; i < 2; i++ {
+		do(t, h, "POST", "/api/review/grade", `{"docId":"java","itemId":"q1","grade":2}`, cookie)
+	}
+
+	if w := do(t, h, "POST", "/api/review/reset", `{"docId":"java","itemId":"q1"}`, cookie); w.Code != http.StatusNoContent {
+		t.Fatalf("重置应 204，实际 %d %s", w.Code, w.Body.String())
+	}
+
+	w := do(t, h, "GET", "/api/snapshot", "", cookie)
+	snap := store.Snapshot{}
+	_ = json.Unmarshal(w.Body.Bytes(), &snap)
+	if len(snap.Review) != 1 || snap.Review[0].Stage != 0 {
+		t.Fatalf("重置后阶段应回到 0: %+v", snap.Review)
+	}
+
+	// 清空整个计划
+	if w := do(t, h, "DELETE", "/api/review", "", cookie); w.Code != http.StatusNoContent {
+		t.Fatalf("清空应 204，实际 %d", w.Code)
+	}
+	w = do(t, h, "GET", "/api/review", "", cookie)
+	plan := store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if plan.Enrolled != 0 || plan.DueTotal != 0 {
+		t.Fatalf("清空后应无内容: %+v", plan)
+	}
+}
+
+func TestReviewRequiresAuth(t *testing.T) {
+	_, h := newTestServer(t)
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/review", ""},
+		{"POST", "/api/review/grade", `{"docId":"a","itemId":"b","grade":2}`},
+		{"PUT", "/api/review/config", `{"dailyCap":10,"enabled":true}`},
+		{"POST", "/api/review/reset", `{"docId":"a","itemId":"b"}`},
+		{"DELETE", "/api/review", ""},
+	} {
+		if w := do(t, h, c.method, c.path, c.body, nil); w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s 未登录应 401，实际 %d", c.method, c.path, w.Code)
+		}
+	}
+}

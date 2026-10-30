@@ -1,8 +1,9 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useContentStore, useStudyStore } from '@/stores'
 import { computeGoalProgress, daysBetween, formatDay, paceOf, today } from '@/utils/goal'
 import type { ModuleProgress, PaceLevel } from '@/utils/goal'
+import { DEFAULT_MINUTES, LIBRARY_LABEL, WEEKDAYS } from '@/utils/plan'
 import type { DocMeta } from '@/types'
 
 const content = useContentStore()
@@ -16,6 +17,12 @@ const error = ref('')
 const draftSlugs = ref<string[]>([])
 const draftDue = ref('')
 const draftDaily = ref(0)
+const draftMinutes = ref(120)
+const draftRestDays = ref<string[]>([])
+const draftWeeklyRest = ref<number[]>([])
+const draftPerItem = ref<Record<string, number>>({ ...DEFAULT_MINUTES })
+const newRestDay = ref('')
+const advancedOpen = ref(false)
 
 // 默认截止日：今天 + 30 天
 function defaultDue(): string {
@@ -31,9 +38,72 @@ watch(
     draftSlugs.value = g ? [...g.docSlugs] : []
     draftDue.value = g?.dueDay ?? defaultDue()
     draftDaily.value = g?.dailyTarget ?? 0
+    draftMinutes.value = g?.dailyMinutes && g.dailyMinutes > 0 ? g.dailyMinutes : 120
+    draftRestDays.value = g ? [...(g.restDays ?? [])] : []
+    draftWeeklyRest.value = g ? [...(g.weeklyRest ?? [])] : []
+    draftPerItem.value = { ...DEFAULT_MINUTES, ...(g?.minutesPerItem ?? {}) }
   },
   { immediate: true },
 )
+
+/** 选中的模块涉及哪些内容库（决定要暴露几条「每条分钟数」的设置）。 */
+const selectedLibraries = computed(() => {
+  const set = new Set<string>()
+  for (const doc of selectedItems.value) set.add(doc.library)
+  return [...set]
+})
+
+/** 预计的总工作量（分钟）= Σ 剩余条数 × 单价。 */
+const totalMinutesEstimate = computed(() => {
+  let sum = 0
+  for (const doc of selectedItems.value) {
+    const done = study.docStats(doc.slug, doc.questionCount).done
+    const left = Math.max(0, doc.questionCount - done)
+    const per = draftPerItem.value[doc.library] ?? DEFAULT_MINUTES[doc.library] ?? 5
+    sum += left * per
+  }
+  return sum
+})
+
+/** 按每天可用时间粗估需要多少天（不含复习，用于给用户一个直觉）。 */
+const estimateDays = computed(() => {
+  if (draftMinutes.value <= 0) return 0
+  return Math.ceil(totalMinutesEstimate.value / draftMinutes.value)
+})
+
+/** 有效学习天数：扣掉停滞日与每周休息日。 */
+const effectiveStudyDays = computed(() => {
+  if (!draftDue.value) return 0
+  const total = Math.max(1, daysBetween(today(), draftDue.value) + 1)
+  const restSet = new Set(draftRestDays.value)
+  const wk = new Set(draftWeeklyRest.value)
+  let usable = 0
+  for (let i = 0; i < total; i++) {
+    const d = new Date()
+    d.setDate(d.getDate() + i)
+    const key = formatDay(d)
+    if (restSet.has(key) || wk.has(d.getDay())) continue
+    usable++
+  }
+  return usable
+})
+
+function addRestDay() {
+  const d = newRestDay.value
+  if (!d || draftRestDays.value.includes(d)) return
+  draftRestDays.value = [...draftRestDays.value, d].sort()
+  newRestDay.value = ''
+}
+
+function removeRestDay(d: string) {
+  draftRestDays.value = draftRestDays.value.filter((x) => x !== d)
+}
+
+function toggleWeekday(w: number) {
+  const i = draftWeeklyRest.value.indexOf(w)
+  if (i >= 0) draftWeeklyRest.value.splice(i, 1)
+  else draftWeeklyRest.value.push(w)
+}
 
 /** 按库分组列出可勾选的模块 */
 const moduleGroups = computed(() => {
@@ -117,6 +187,10 @@ async function save() {
       docSlugs: draftSlugs.value,
       dueDay: draftDue.value,
       dailyTarget: Math.max(0, Math.round(draftDaily.value)),
+      dailyMinutes: Math.max(0, Math.round(draftMinutes.value)),
+      restDays: draftRestDays.value,
+      weeklyRest: draftWeeklyRest.value,
+      minutesPerItem: draftPerItem.value,
     })
     open.value = false
   } catch (e) {
@@ -146,7 +220,13 @@ const doneOf = (slug: string) => {
 }
 
 const progress = computed(() =>
-  computeGoalProgress(study.goal, content.docMetas, doneOf),
+  computeGoalProgress(
+    study.goal,
+    content.docMetas,
+    doneOf,
+    undefined,
+    study.goal?.minutesPerItem,
+  ),
 )
 
 const pace = computed(() => paceOf(progress.value))
@@ -257,7 +337,7 @@ function modulePaceText(m: ModuleProgress): string {
         <div>
           <p class="text-[11px] text-fg-dim">今日应有进度</p>
           <p class="text-xl font-semibold text-fg tabular-nums">
-            {{ Math.round(progress.expectedDone) }}
+            {{ Math.ceil(progress.expectedDone) }}
             <span class="text-xs font-normal text-fg-dim">/ {{ progress.totalItems }} 条累计</span>
           </p>
         </div>
@@ -282,7 +362,7 @@ function modulePaceText(m: ModuleProgress): string {
           v-if="expectedMark > 0 && expectedMark < 100"
           class="absolute top-[-2px] h-3 w-0.5 -translate-x-1/2 rounded-full bg-fg-muted/70"
           :style="{ left: `${expectedMark}%` }"
-          :title="`今天应有 ${Math.round(progress.expectedDone)} 条`"
+          :title="`今天应有 ${Math.ceil(progress.expectedDone)} 条`"
         />
       </div>
 
@@ -340,11 +420,11 @@ function modulePaceText(m: ModuleProgress): string {
                 v-if="moduleMark(m) > 0 && moduleMark(m) < 100"
                 class="absolute top-[-1px] h-2.5 w-0.5 -translate-x-1/2 rounded-full bg-fg-muted/60"
                 :style="{ left: `${moduleMark(m)}%` }"
-                :title="`今天应有 ${Math.round(m.expectedDone)} 条`"
+                :title="`今天应有 ${Math.ceil(m.expectedDone)} 条`"
               />
             </div>
             <p class="mt-0.5 text-[10px] text-fg-dim">
-              今天应到 {{ Math.round(m.expectedDone) }} 条
+              今天应到 {{ Math.ceil(m.expectedDone) }} 条
               <span v-if="m.todayRemaining > 0" class="text-amber-glow">· 还差 {{ m.todayRemaining }} 条</span>
               <span v-else class="text-mint-500 dark:text-mint-400">· 已达标</span>
               <span class="text-fg-dim/70">（每天 {{ m.dailyTarget.toFixed(1) }} 条）</span>
@@ -405,27 +485,102 @@ function modulePaceText(m: ModuleProgress): string {
         </label>
         <label class="block">
           <span class="mb-1 block text-[11px] text-fg-dim">
-            每日目标（留 0 = 自动均摊）
+            每天能投入多少分钟
           </span>
           <input
-            v-model.number="draftDaily"
+            v-model.number="draftMinutes"
             type="number"
-            min="0"
-            step="1"
-            placeholder="0"
+            min="1"
+            max="1440"
+            step="5"
             class="field py-1.5 text-xs"
           />
         </label>
       </div>
 
+      <!-- 各库每条耗时：算法和八股根本不是一个速度 -->
+      <div v-if="selectedLibraries.length" class="mt-3 rounded-lg bg-panel-soft px-3 py-2">
+        <p class="mb-1.5 text-[11px] font-medium text-fg-muted">
+          学一条大概要多久（算法一篇长文和一道八股题差很多）
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <label v-for="lib in selectedLibraries" :key="lib" class="flex items-center gap-1.5">
+            <span class="text-[11px] text-fg-dim">{{ LIBRARY_LABEL[lib] ?? lib }}</span>
+            <input
+              v-model.number="draftPerItem[lib]"
+              type="number"
+              min="1"
+              max="600"
+              step="1"
+              class="field w-16 py-1 text-xs"
+            />
+            <span class="text-[10px] text-fg-dim">分钟</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 停滞日 -->
+      <div class="mt-3 rounded-lg bg-panel-soft px-3 py-2">
+        <button
+          class="flex w-full items-center justify-between text-[11px] font-medium text-fg-muted"
+          @click="advancedOpen = !advancedOpen"
+        >
+          <span>停滞日：哪天不学（可留空）</span>
+          <span class="text-fg-dim">{{ advancedOpen ? '收起 ↑' : '展开 ↓' }}</span>
+        </button>
+
+        <div v-if="advancedOpen" class="mt-2 space-y-2">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-[10px] text-fg-dim">每周固定休</span>
+            <button
+              v-for="(w, i) in WEEKDAYS"
+              :key="i"
+              class="rounded px-1.5 py-0.5 text-[10px] transition-colors"
+              :class="
+                draftWeeklyRest.includes(i)
+                  ? 'bg-accent text-accent-fg'
+                  : 'bg-line text-fg-muted hover:bg-line-strong'
+              "
+              @click="toggleWeekday(i)"
+            >
+              {{ w }}
+            </button>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-1.5">
+            <input v-model="newRestDay" type="date" :min="today()" class="field w-32 py-1 text-xs" />
+            <button class="btn btn-outline px-2 py-0.5 text-[10px]" @click="addRestDay">加一天</button>
+          </div>
+
+          <div v-if="draftRestDays.length" class="flex flex-wrap gap-1">
+            <button
+              v-for="d in draftRestDays"
+              :key="d"
+              class="chip bg-line text-[10px] text-fg-muted hover:bg-red-500/20 hover:text-red-500"
+              :title="`点击移除 ${d}`"
+              @click="removeRestDay(d)"
+            >
+              {{ d }} ×
+            </button>
+          </div>
+          <p class="text-[10px] leading-relaxed text-fg-dim">
+            加了停滞日，计划会自动按剩下的有效天数重排 —— 不会让你第二天补双份。
+          </p>
+        </div>
+      </div>
+
       <div class="mt-2 rounded-lg bg-panel-soft px-3 py-2 text-[11px] leading-relaxed text-fg-muted">
         已选 <span class="font-semibold text-fg">{{ selectedItems.length }}</span> 个模块，
-        共 <span class="font-semibold text-fg">{{ draftTotal }}</span> 条 ·
-        剩余 <span class="font-semibold text-fg">{{ draftDays }}</span> 天 →
-        每天约 <span class="font-semibold text-fg">{{ draftDailyEffective.toFixed(1) }}</span> 条
-        <span v-if="draftDaily > 0" class="text-amber-glow">
-          （自定目标，按此进度约 {{ draftEstimateDays }} 天完成）
+        待学 <span class="font-semibold text-fg">{{ draftTotal }}</span> 条 ·
+        有效学习日 <span class="font-semibold text-fg">{{ effectiveStudyDays }}</span> 天
+        <br />
+        预计需 <span class="font-semibold text-fg">{{ Math.round(totalMinutesEstimate / 60) }}</span> 小时，
+        按每天 {{ draftMinutes }} 分钟约
+        <span class="font-semibold text-fg">{{ estimateDays }}</span> 天学完
+        <span v-if="estimateDays > effectiveStudyDays" class="text-amber-glow">
+          （超出可用天数 {{ estimateDays - effectiveStudyDays }} 天，建议延后截止日或加时间）
         </span>
+        <span class="text-fg-dim">· 未计复习</span>
       </div>
 
       <p v-if="error" class="mt-2 text-[11px] text-red-500">{{ error }}</p>

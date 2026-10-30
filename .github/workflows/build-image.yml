@@ -40,7 +40,7 @@ jobs:
 
       - name: 前端单元测试
         working-directory: web
-        run: node --experimental-strip-types --test src/utils/goal.test.ts
+        run: node --experimental-strip-types --test src/utils/*.test.ts
 
       - uses: actions/setup-go@v5
         with:

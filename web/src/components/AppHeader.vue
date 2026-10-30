@@ -10,6 +10,7 @@ const menuOpen = ref(false)
 
 const links = [
   { name: 'dashboard', label: '看板', icon: '◎' },
+  { name: 'review', label: '今日复习', icon: '↻' },
   { name: 'notes', label: '我的笔记', icon: '✎' },
 ]
 

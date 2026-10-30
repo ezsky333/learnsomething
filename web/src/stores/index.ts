@@ -1,7 +1,21 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/api/client'
-import type { Doc, DocMeta, Goal, Library, Manifest, Note, Progress, Snapshot, Status } from '@/types'
+import type {
+  Doc,
+  DocMeta,
+  Goal,
+  Library,
+  Manifest,
+  Note,
+  Progress,
+  ReviewGrade,
+  ReviewItem,
+  ReviewPlan,
+  Snapshot,
+  Status,
+  StudyPlanResponse,
+} from '@/types'
 
 /** 内容库（manifest + 已加载文档缓存），只读。 */
 export const useContentStore = defineStore('content', () => {
@@ -95,6 +109,7 @@ export const useStudyStore = defineStore('study', () => {
   const progress = ref<Record<string, Progress>>({})
   const notes = ref<Note[]>([])
   const goal = ref<Goal | null>(null)
+  const reviewMap = ref<Record<string, ReviewItem>>({})
   const loaded = ref(false)
   const syncing = ref(false)
   const lastSyncAt = ref<string>('')
@@ -224,6 +239,9 @@ export const useStudyStore = defineStore('study', () => {
     progress.value = map
     notes.value = snap.notes
     goal.value = snap.goal ?? null
+    const rmap: Record<string, ReviewItem> = {}
+    for (const r of snap.review ?? []) rmap[key(r.docId, r.itemId)] = r
+    reviewMap.value = rmap
   }
 
   async function refresh() {
@@ -313,12 +331,65 @@ export const useStudyStore = defineStore('study', () => {
     notes.value = notes.value.filter((n) => n.id !== id)
   }
 
+  // ---------- 复习计划 ----------
+
+  /** 某条内容的复习状态；不在计划里返回 undefined。 */
+  const reviewOf = (docId: string, itemId: string): ReviewItem | undefined =>
+    reviewMap.value[key(docId, itemId)]
+
+  async function loadReviewPlan(day?: string, ahead = 0): Promise<ReviewPlan> {
+    const params = new URLSearchParams()
+    if (day) params.set('day', day)
+    if (ahead > 0) params.set('ahead', String(ahead))
+    const q = params.toString()
+    // 计划随时变化（做完一条队列就短一条），不能走浏览器缓存。
+    return api.getFresh<ReviewPlan>(`/api/review${q ? `?${q}` : ''}`)
+  }
+
+  async function gradeReview(docId: string, itemId: string, grade: ReviewGrade) {
+    const it = await api.post<ReviewItem>('/api/review/grade', { docId, itemId, grade })
+    if (it.graduated) {
+      // 毕业后不再出现在在籍列表里
+      const copy = { ...reviewMap.value }
+      delete copy[key(docId, itemId)]
+      reviewMap.value = copy
+    } else {
+      reviewMap.value = { ...reviewMap.value, [key(docId, itemId)]: it }
+    }
+    return it
+  }
+
+  async function saveReviewConfig(
+    dailyCap: number,
+    enabled: boolean,
+    libCap?: Record<string, number>,
+  ) {
+    return api.put<{ dailyCap: number; enabled: boolean; libCap: Record<string, number> }>(
+      '/api/review/config',
+      { dailyCap, enabled, libCap: libCap ?? {} },
+    )
+  }
+
+  async function resetReview(docId: string, itemId: string) {
+    await api.post('/api/review/reset', { docId, itemId })
+    await refresh()
+  }
+
+  async function clearReviews() {
+    await api.del('/api/review')
+    reviewMap.value = {}
+  }
+
   // ---------- 学习任务 ----------
 
   async function saveGoal(input: {
     docSlugs: string[]
     dueDay: string
     dailyTarget: number
+    dailyMinutes: number
+    restDays: string[]
+    weeklyRest: number[]
+    minutesPerItem: Record<string, number>
   }) {
     const saved = await api.put<Goal>('/api/goal', input)
     goal.value = saved
@@ -328,6 +399,11 @@ export const useStudyStore = defineStore('study', () => {
   async function clearGoal() {
     await api.del('/api/goal')
     goal.value = null
+  }
+
+  /** 按当前目标与真实进度推算逐日学习计划。 */
+  async function loadStudyPlan() {
+    return api.getFresh<StudyPlanResponse>('/api/plan')
   }
 
   return {
@@ -340,6 +416,7 @@ export const useStudyStore = defineStore('study', () => {
     syncError,
     saveGoal,
     clearGoal,
+    loadStudyPlan,
     allStats,
     noteCountByDoc,
     noteGroups,
@@ -357,6 +434,13 @@ export const useStudyStore = defineStore('study', () => {
     addNote,
     editNote,
     removeNote,
+    reviewMap,
+    reviewOf,
+    loadReviewPlan,
+    gradeReview,
+    saveReviewConfig,
+    resetReview,
+    clearReviews,
   }
 })
 

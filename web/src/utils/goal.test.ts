@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 
 import {
   computeGoalProgress,
+  computeModuleProgress,
   daysBetween,
   formatDay,
   paceOf,
@@ -251,5 +252,91 @@ test('分模块：过期任务各模块都是 expired', () => {
   const p = computeGoalProgress(g, docs, () => 1)
   for (const m of p.modules) {
     assert.equal(m.pace, 'expired')
+  }
+})
+// ---------- 分库速度：算法和八股不能用同一个速度 ----------
+
+function docLib(slug: string, questionCount: number, library: string): DocMeta {
+  return {
+    slug,
+    title: slug,
+    group: 'test',
+    order: 1,
+    sourceUrl: '',
+    sourceUpdated: '',
+    sectionCount: 1,
+    questionCount,
+    charCount: questionCount * 100,
+    library: library as DocMeta['library'],
+  } as DocMeta
+}
+
+function goalMin(
+  docSlugs: string[],
+  startDay: string,
+  dueDay: string,
+  dailyMinutes: number,
+): Goal {
+  return {
+    docSlugs,
+    startDay,
+    dueDay,
+    dailyTarget: 0,
+    dailyMinutes,
+    restDays: [],
+    weeklyRest: [],
+    minutesPerItem: {},
+    createdAt: '',
+    updatedAt: '',
+  }
+}
+
+test('按时间预算分库时，八股每日条数应远高于算法', () => {
+  const docs = [docLib('java', 79, 'interview'), docLib('algo-array', 9, 'algo')]
+  const g = goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(30), 120)
+  const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
+
+  const java = mods.find((m) => m.slug === 'java')!
+  const algo = mods.find((m) => m.slug === 'algo-array')!
+
+  // 79*5=395 分钟  vs  9*25=225 分钟 → 八股占 64% 的时间
+  // 八股每天 ≈ 120*0.637/5 ≈ 15.3 条；算法 ≈ 120*0.363/25 ≈ 1.7 条
+  if (!(java.dailyTarget > algo.dailyTarget * 4)) {
+    throw new Error(`八股日均应远高于算法：${java.dailyTarget.toFixed(1)} vs ${algo.dailyTarget.toFixed(1)}`)
+  }
+  // 算法至少得有 1 条以上，不能被抹成 0
+  if (algo.dailyTarget < 1) {
+    throw new Error(`算法日均不该小于 1 条，实际 ${algo.dailyTarget}`)
+  }
+})
+
+test('没有分钟数配置时退回按条数均摊', () => {
+  const docs = [docLib('java', 30, 'interview')]
+  const g = goalMin(['java'], dayOffset(-1), dayOffset(29), 120)
+  const mods = computeModuleProgress(g, docs, () => 0, undefined)
+  // 30 天，30 条 → 每天 1 条
+  assert.ok(Math.abs(mods[0].dailyTarget - 1) < 0.2)
+})
+
+test('每日分钟数越多，两个库的每日条数都随之上升', () => {
+  const docs = [docLib('java', 200, 'interview'), docLib('algo-array', 100, 'algo')]
+  const low = computeModuleProgress(
+    goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(60), 60),
+    docs,
+    () => 0,
+    { interview: 5, algo: 25 },
+  )
+  const high = computeModuleProgress(
+    goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(60), 180),
+    docs,
+    () => 0,
+    { interview: 5, algo: 25 },
+  )
+  const jl = low.find((m) => m.slug === 'java')!.dailyTarget
+  const jh = high.find((m) => m.slug === 'java')!.dailyTarget
+  const al = low.find((m) => m.slug === 'algo-array')!.dailyTarget
+  const ah = high.find((m) => m.slug === 'algo-array')!.dailyTarget
+  if (!(jh > jl && ah > al)) {
+    throw new Error(`时间翻倍应让两库都加速：java ${jl.toFixed(1)}→${jh.toFixed(1)}, algo ${al.toFixed(1)}→${ah.toFixed(1)}`)
   }
 })

@@ -3,11 +3,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import GoalPanel from '@/components/GoalPanel.vue'
+import PlanPanel from '@/components/PlanPanel.vue'
 import Heatmap from '@/components/Heatmap.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import ProgressRing from '@/components/ProgressRing.vue'
 import { useContentStore, useStudyStore } from '@/stores'
-import type { DocMeta, Library } from '@/types'
+import type { DocMeta, Library, ReviewPlan } from '@/types'
 
 const content = useContentStore()
 const study = useStudyStore()
@@ -36,7 +37,18 @@ watch(library, (v) => {
 onMounted(async () => {
   await content.loadManifest()
   if (!study.loaded) await study.load()
+  try {
+    review.value = await study.loadReviewPlan()
+  } catch {
+    // 复习模块读不到不影响看板主体
+  }
 })
+
+/** 今日复习摘要，用于看板顶部的入口卡片。 */
+const review = ref<ReviewPlan | null>(null)
+
+const reviewTodo = computed(() => review.value?.queue.length ?? 0)
+const reviewBacklog = computed(() => review.value?.backlog ?? 0)
 
 const scopeDocs = computed(() => {
   if (library.value === 'algo') return content.algoDocs
@@ -239,11 +251,48 @@ const motivation = computed(() => {
       </div>
     </section>
 
+    <!-- 今日复习入口 -->
+    <section v-if="review && review.enabled" class="mt-4">
+      <RouterLink
+        to="/review"
+        class="card flex flex-wrap items-center gap-3 p-4 transition-colors hover:border-line-strong hover:bg-panel-raise"
+      >
+        <span
+          class="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-base"
+          :class="
+            reviewTodo > 0 ? 'bg-accent-soft text-accent' : 'bg-mint-500/15 text-mint-600 dark:text-mint-400'
+          "
+        >
+          ↻
+        </span>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-semibold text-fg">
+            {{ reviewTodo > 0 ? `今日复习 ${reviewTodo} 条` : '今天没有要复习的' }}
+          </p>
+          <p class="mt-0.5 text-[11px] text-fg-dim">
+            <template v-if="reviewTodo > 0">
+              在籍 {{ review.enrolled }} 条 · 每天上限 {{ review.cap }} 条
+              <span v-if="reviewBacklog > 0" class="text-amber-glow">· {{ reviewBacklog }} 条已逾期</span>
+            </template>
+            <template v-else-if="review.nextDueDay">
+              下次是 {{ review.nextDueDay }} · 在籍 {{ review.enrolled }} 条
+            </template>
+            <template v-else> 标记「已掌握」的内容会自动排进复习计划 </template>
+          </p>
+        </div>
+        <span class="text-xs text-accent">开始复习 →</span>
+      </RouterLink>
+    </section>
+
     <!-- 学习任务：今日应有进度 / 超前落后 -->
     <section class="mt-4">
       <GoalPanel />
     </section>
 
+    <!-- 学习计划推算：目标是否现实 + 逐日排期 -->
+    <section v-if="study.goal" class="mt-4">
+      <PlanPanel />
+    </section>
     <section v-for="group in grouped" :key="group.title" class="mt-8">
       <h2 class="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
         <span class="h-3.5 w-0.5 rounded-full bg-accent" />

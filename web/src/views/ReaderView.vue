@@ -278,7 +278,14 @@ async function markDoneAndNext(item: Item) {
     showToast(e instanceof Error ? e.message : '保存失败')
   })
   goNext()
-  showToast(`${doneLabel.value}，下一${unit.value} →`)
+  // 标记掌握会自动进入复习计划，明确告知下次什么时候要回头看 ——
+  // 否则用户会以为「点完就结束了」，这一条再也不会被想起来。
+  const rv = study.reviewOf(doc.value.slug, item.id)
+  if (rv && rv.dueDay) {
+    showToast(`${doneLabel.value}，${rv.dueDay} 会提醒复习 →`)
+  } else {
+    showToast(`${doneLabel.value}，下一${unit.value} →`)
+  }
 }
 
 async function markLearningAndNext(item: Item) {
@@ -518,6 +525,13 @@ const todoLabel = computed(() => (isAlgo.value ? '未学完' : '未掌握'))
 /** 上一篇 / 下一篇（算法专题内按顺序推进用）。 */
 const prevRow = computed(() => allRows.value[cursor.value - 1] ?? null)
 const nextRow = computed(() => allRows.value[cursor.value + 1] ?? null)
+
+/** 复习状态的极简提示：逾期几天 / 还有几天。 */
+function reviewHint(rv: { overdue: number; interval: number }): string {
+  if (rv.overdue > 0) return `逾期 ${rv.overdue} 天`
+  if (rv.interval <= 0) return '待复习'
+  return `${rv.interval} 天后`
+}
 </script>
 
 <template>
@@ -660,6 +674,13 @@ const nextRow = computed(() => allRows.value[cursor.value + 1] ?? null)
                 </p>
               </div>
               <div class="flex shrink-0 items-center gap-1">
+                <span
+                  v-if="study.reviewOf(doc.slug, currentRow.item.id)"
+                  class="chip hidden bg-accent-soft text-[10px] text-accent sm:inline-flex"
+                  :title="`下次复习：${study.reviewOf(doc.slug, currentRow.item.id)!.dueDay}`"
+                >
+                  ↻ {{ reviewHint(study.reviewOf(doc.slug, currentRow.item.id)!) }}
+                </span>
                 <StatusBadge :status="study.statusOf(doc.slug, currentRow.item.id)" />
                 <button
                   class="grid h-7 w-7 place-items-center rounded-md text-sm transition-colors hover:bg-panel-soft"

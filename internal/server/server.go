@@ -22,15 +22,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"learnsomething/internal/config"
+	"learnsomething/internal/plan"
 	"learnsomething/internal/store"
 )
 
 // Server 承载全部 HTTP 路由。
 type Server struct {
-	cfg     config.Config
-	store   *store.Store
-	content embed.FS // content/manifest.json, content/docs/*.json, content/img/*
-	web     embed.FS // web/dist/*
+	cfg           config.Config
+	store         *store.Store
+	content       embed.FS // content/manifest.json, content/docs/*.json, content/img/*
+	web           embed.FS // web/dist/*
 	manifestCache []byte
 
 	loginMu    sync.Mutex
@@ -52,6 +53,16 @@ func New(cfg config.Config, st *store.Store, content, web embed.FS) (*Server, er
 		return nil, err
 	}
 	s.manifestCache = m
+
+	// 把 docID → 内容库 交给 store：复习额度要按库分开算
+	// （算法一条复习十几分钟，八股几分钟，共用一个上限会让算法永远排不进去）。
+	if docs, err := contentDocs(content); err == nil {
+		libs := make(map[string]string, len(docs))
+		for slug, d := range docs {
+			libs[slug] = d.Library
+		}
+		st.SetDocLibraries(libs)
+	}
 	return s, nil
 }
 
@@ -74,6 +85,15 @@ func (s *Server) Handler() http.Handler {
 	// 学习任务
 	mux.HandleFunc("PUT /api/goal", s.auth(s.handlePutGoal))
 	mux.HandleFunc("DELETE /api/goal", s.auth(s.handleDeleteGoal))
+	mux.HandleFunc("GET /api/plan", s.auth(s.handleStudyPlan))
+
+	// 复习计划
+	mux.HandleFunc("GET /api/review", s.auth(s.handleReviewPlan))
+	mux.HandleFunc("GET /api/review/item", s.auth(s.handleReviewItem))
+	mux.HandleFunc("POST /api/review/grade", s.auth(s.handleGradeReview))
+	mux.HandleFunc("PUT /api/review/config", s.auth(s.handlePutReviewConfig))
+	mux.HandleFunc("POST /api/review/reset", s.auth(s.handleResetReview))
+	mux.HandleFunc("DELETE /api/review", s.auth(s.handleClearReviews))
 
 	// 内容
 	mux.HandleFunc("GET /api/content/manifest", s.handleManifest)
@@ -370,9 +390,26 @@ type goalReq struct {
 	DocSlugs    []string `json:"docSlugs"`
 	DueDay      string   `json:"dueDay"`
 	DailyTarget int      `json:"dailyTarget"`
+	// DailyMinutes 是每天可投入的分钟数，计划推算的核心输入。
+	DailyMinutes int `json:"dailyMinutes"`
+	// RestDays 是一次性停滞日，WeeklyRest 是每周固定休息（0=周日）。
+	RestDays   []string `json:"restDays"`
+	WeeklyRest []int    `json:"weeklyRest"`
+	// MinutesPerItem 各库学一条的分钟数（算法远高于八股）。
+	MinutesPerItem map[string]int `json:"minutesPerItem"`
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// defaultMinutesPerItem 是没指定时各类内容的经验值（分钟/条）。
+//
+// 算法一篇长文要读、要自己想、还要写代码验证，和「看一眼答案就懂」的
+// 八股题完全不是一个量级；用同一个数字排计划必然失真。
+var defaultMinutesPerItem = map[string]int{
+	"interview": 5,
+	"algo":      25,
+	"ai":        8,
+}
 
 func (s *Server) handlePutGoal(w http.ResponseWriter, r *http.Request) {
 	var req goalReq
@@ -402,12 +439,38 @@ func (s *Server) handlePutGoal(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "每日目标不能为负数")
 		return
 	}
+	if req.DailyMinutes < 0 || req.DailyMinutes > 1440 {
+		writeErr(w, http.StatusBadRequest, "每天可用时间应在 0~1440 分钟之间")
+		return
+	}
+	for _, d := range req.RestDays {
+		if !dayRe.MatchString(d) {
+			writeErr(w, http.StatusBadRequest, "停滞日格式应为 YYYY-MM-DD")
+			return
+		}
+	}
+	for _, wd := range req.WeeklyRest {
+		if wd < 0 || wd > 6 {
+			writeErr(w, http.StatusBadRequest, "每周休息日应为 0~6（0=周日）")
+			return
+		}
+	}
+	for lib, m := range req.MinutesPerItem {
+		if m < 1 || m > 600 {
+			writeErr(w, http.StatusBadRequest, "「"+lib+"」的每条分钟数应在 1~600 之间")
+			return
+		}
+	}
 
 	goal, err := s.store.SetGoal(store.Goal{
-		DocSlugs:    req.DocSlugs,
-		StartDay:    today,
-		DueDay:      req.DueDay,
-		DailyTarget: req.DailyTarget,
+		DocSlugs:       req.DocSlugs,
+		StartDay:       today,
+		DueDay:         req.DueDay,
+		DailyTarget:    req.DailyTarget,
+		DailyMinutes:   req.DailyMinutes,
+		RestDays:       req.RestDays,
+		WeeklyRest:     req.WeeklyRest,
+		MinutesPerItem: req.MinutesPerItem,
 	})
 	if err != nil {
 		s.fail(w, "保存学习任务", err)
@@ -420,6 +483,322 @@ func (s *Server) handlePutGoal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteGoal(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.ClearGoal(); err != nil {
 		s.fail(w, "删除学习任务", err)
+		return
+	}
+	s.bumpRevision()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------- 学习计划推算 ----------
+
+// handleStudyPlan 按当前目标 + 真实剩余量逐日推演出学习计划。
+//
+// 为什么要放服务端算：计划依赖「已掌握多少条」「已排了多少复习」这类
+// 只有服务端掌握的事实；而「学习和复习抢时间」的推演要跑几十上百天，
+// 前端算会卡。
+func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
+	goal, err := s.store.GetGoal()
+	if err != nil {
+		s.fail(w, "读取学习任务", err)
+		return
+	}
+	if goal == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"hasGoal": false})
+		return
+	}
+
+	// 用 manifest 里每个模块的条数 - 已掌握数 = 真实剩余量。
+	docs, err := contentDocs(s.content)
+	if err != nil {
+		s.fail(w, "读取内容清单", err)
+		return
+	}
+	doneBySlug, err := s.store.DoneCountByDoc()
+	if err != nil {
+		s.fail(w, "统计进度", err)
+		return
+	}
+
+	// 把勾选的模块按内容库聚合（算法与八股的学习速度不同，要分开算）。
+	libRemaining := map[string]int{}
+	libReviewCap := map[string]int{}
+	for _, slug := range goal.DocSlugs {
+		d, ok := docs[slug]
+		if !ok || d.ReadingList {
+			continue
+		}
+		left := d.QuestionCount - doneBySlug[slug]
+		if left < 0 {
+			left = 0
+		}
+		if left == 0 {
+			continue
+		}
+		libRemaining[d.Library] += left
+		// 复习额度按库分配：算法复习一条要 15 分钟，不能让 40 条把它压死。
+		libReviewCap[d.Library] = defaultReviewCap(d.Library)
+	}
+
+	in := plan.Input{
+		StartDay:     time.Now().Format("2006-01-02"),
+		DueDay:       goal.DueDay,
+		DailyMinutes: goal.DailyMinutes,
+		RestDays:     goal.RestDays,
+		WeeklyRest:   goal.WeeklyRest,
+	}
+	if in.DailyMinutes <= 0 {
+		in.DailyMinutes = 120
+	}
+	if goal.StartDay != "" && goal.StartDay < in.StartDay {
+		// 计划总是从今天往后算，历史天数没有意义
+		in.StartDay = time.Now().Format("2006-01-02")
+	}
+
+	for lib, left := range libRemaining {
+		minutes := goal.MinutesPerItem[lib]
+		if minutes <= 0 {
+			minutes = defaultMinutesPerItem[lib]
+		}
+		if minutes <= 0 {
+			minutes = 5
+		}
+		in.Libs = append(in.Libs, plan.LibInput{
+			Library:        lib,
+			Remaining:      left,
+			MinutesPerItem: minutes,
+			ReviewCap:      libReviewCap[lib],
+		})
+	}
+
+	// 已有的复习债必须算进去，否则会严重低估后期负担。
+	active, err := s.store.ActiveReviews()
+	if err != nil {
+		s.fail(w, "读取复习计划", err)
+		return
+	}
+	for _, it := range active {
+		if it.DueDay == "" || it.DueDay < in.StartDay {
+			continue // 已逾期的当成今天到期
+		}
+		lib := docLibrary(docs, it.DocID)
+		in.Pending = append(in.Pending, plan.Pending{
+			Library: lib,
+			DueDay:  it.DueDay,
+			Stage:   it.Stage,
+		})
+	}
+
+	res := plan.Simulate(in)
+	rec := plan.Recommend(in)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"hasGoal": true,
+		"goal":    goal,
+		"plan":    res,
+		"advice":  rec,
+		"libs":    libRemaining,
+	})
+}
+
+// defaultReviewCap 是各库每天最多安排多少条复习。
+//
+// 算法一条复习要十几分钟，若和八股共用 40 条的额度，
+// 光复习就吃掉整天时间，新内容永远推不动。
+func defaultReviewCap(library string) int {
+	switch library {
+	case "algo":
+		return 6
+	case "ai":
+		return 15
+	default:
+		return 30
+	}
+}
+
+// docLibrary 查出某篇文档属于哪个内容库。
+func docLibrary(docs map[string]docMetaLite, slug string) string {
+	if d, ok := docs[slug]; ok {
+		return d.Library
+	}
+	return "interview"
+}
+
+// docMetaLite 是计划推算需要的文档元信息。
+type docMetaLite struct {
+	Slug         string `json:"slug"`
+	Library      string `json:"library"`
+	QuestionCount int   `json:"questionCount"`
+	ReadingList  bool   `json:"readingList"`
+}
+
+// contentDocs 从已缓存的 manifest 解析出 slug → 元信息。
+func contentDocs(content embed.FS) (map[string]docMetaLite, error) {
+	raw, err := fs.ReadFile(fs.FS(content), "content/manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	var m struct {
+		Docs []docMetaLite `json:"docs"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	out := make(map[string]docMetaLite, len(m.Docs))
+	for _, d := range m.Docs {
+		out[d.Slug] = d
+	}
+	return out, nil
+}
+
+// ---------- 复习计划 ----------
+
+// handleReviewPlan 返回「今天该复习什么」：队列、逾期积压、未来负载。
+//
+// ahead=N 表示顺带把未来 N 天内到期的内容也拉进队列（提前复习），
+// 用于今天恰好没有到期内容、但用户仍想推进的场景。
+func (s *Server) handleReviewPlan(w http.ResponseWriter, r *http.Request) {
+	day := r.URL.Query().Get("day")
+	if day != "" && !dayRe.MatchString(day) {
+		writeErr(w, http.StatusBadRequest, "day 格式应为 YYYY-MM-DD")
+		return
+	}
+	ahead := 0
+	if v := r.URL.Query().Get("ahead"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 30 {
+			writeErr(w, http.StatusBadRequest, "ahead 应为 0~30 的整数")
+			return
+		}
+		ahead = n
+	}
+	plan, err := s.store.ReviewPlanAhead(day, ahead)
+	if err != nil {
+		s.fail(w, "读取复习计划", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+// handleReviewItem 查单条内容的复习状态，供阅读页显示「下次复习 X 天后」。
+// 不在计划里时返回 200 + enrolled:false，前端据此决定是否显示提示。
+func (s *Server) handleReviewItem(w http.ResponseWriter, r *http.Request) {
+	docID := r.URL.Query().Get("docId")
+	itemID := r.URL.Query().Get("itemId")
+	if docID == "" || itemID == "" {
+		writeErr(w, http.StatusBadRequest, "缺少 docId 或 itemId")
+		return
+	}
+	it, err := s.store.GetReview(docID, itemID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{"enrolled": false})
+		return
+	}
+	if err != nil {
+		s.fail(w, "读取复习状态", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enrolled": true, "item": it})
+}
+
+type gradeReq struct {
+	DocID  string `json:"docId"`
+	ItemID string `json:"itemId"`
+	Grade  int    `json:"grade"`
+}
+
+func (s *Server) handleGradeReview(w http.ResponseWriter, r *http.Request) {
+	var req gradeReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求格式不正确")
+		return
+	}
+	if req.DocID == "" || req.ItemID == "" {
+		writeErr(w, http.StatusBadRequest, "缺少 docId 或 itemId")
+		return
+	}
+	if req.Grade < store.GradeAgain || req.Grade > store.GradeDefer {
+		writeErr(w, http.StatusBadRequest, "grade 只能是 0/1/2/3")
+		return
+	}
+	it, err := s.store.GradeReview(req.DocID, req.ItemID, req.Grade, time.Now().Format("2006-01-02"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "这条内容不在复习计划里")
+		return
+	}
+	if err != nil {
+		s.fail(w, "记录复习", err)
+		return
+	}
+	s.bumpRevision()
+	writeJSON(w, http.StatusOK, it)
+}
+
+type reviewConfigReq struct {
+	DailyCap int  `json:"dailyCap"`
+	Enabled  bool `json:"enabled"`
+	// LibCap 各内容库的每日复习条数，缺省时用默认值。
+	LibCap map[string]int `json:"libCap"`
+}
+
+func (s *Server) handlePutReviewConfig(w http.ResponseWriter, r *http.Request) {
+	var req reviewConfigReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求格式不正确")
+		return
+	}
+	if req.DailyCap <= 0 {
+		writeErr(w, http.StatusBadRequest, "每日复习上限必须大于 0")
+		return
+	}
+	if req.DailyCap > 500 {
+		writeErr(w, http.StatusBadRequest, "每日复习上限最多 500 条")
+		return
+	}
+	for lib, v := range req.LibCap {
+		if v < 1 || v > 500 {
+			writeErr(w, http.StatusBadRequest, "「"+lib+"」的每日复习条数应在 1~500 之间")
+			return
+		}
+	}
+	cfg, err := s.store.SetReviewConfig(store.ReviewConfig{
+		DailyCap: req.DailyCap,
+		Enabled:  req.Enabled,
+		LibCap:   req.LibCap,
+	})
+	if err != nil {
+		s.fail(w, "保存复习设置", err)
+		return
+	}
+	s.bumpRevision()
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+type reviewItemReq struct {
+	DocID  string `json:"docId"`
+	ItemID string `json:"itemId"`
+}
+
+func (s *Server) handleResetReview(w http.ResponseWriter, r *http.Request) {
+	var req reviewItemReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求格式不正确")
+		return
+	}
+	if req.DocID == "" || req.ItemID == "" {
+		writeErr(w, http.StatusBadRequest, "缺少 docId 或 itemId")
+		return
+	}
+	if err := s.store.ResetReviewItem(req.DocID, req.ItemID, time.Now().Format("2006-01-02")); err != nil {
+		s.fail(w, "重置复习进度", err)
+		return
+	}
+	s.bumpRevision()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleClearReviews(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.ClearReviews(); err != nil {
+		s.fail(w, "清空复习计划", err)
 		return
 	}
 	s.bumpRevision()
