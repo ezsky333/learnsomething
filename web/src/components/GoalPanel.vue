@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useContentStore, useStudyStore } from '@/stores'
 import { computeGoalProgress, daysBetween, formatDay, paceOf, today } from '@/utils/goal'
@@ -124,24 +124,6 @@ const selectedItems = computed(() => {
 const draftTotal = computed(() =>
   selectedItems.value.reduce((sum, d) => sum + d.questionCount, 0),
 )
-
-const draftDays = computed(() => {
-  if (!draftDue.value) return 0
-  return Math.max(1, daysBetween(today(), draftDue.value) + 1)
-})
-
-const draftDailyAuto = computed(() =>
-  draftDays.value > 0 ? draftTotal.value / draftDays.value : 0,
-)
-
-const draftDailyEffective = computed(() =>
-  draftDaily.value > 0 ? draftDaily.value : draftDailyAuto.value,
-)
-
-const draftEstimateDays = computed(() => {
-  if (draftDailyEffective.value <= 0) return 0
-  return Math.ceil(draftTotal.value / draftDailyEffective.value)
-})
 
 function toggleDoc(slug: string) {
   const i = draftSlugs.value.indexOf(slug)

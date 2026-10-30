@@ -1,10 +1,9 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useContentStore, useStudyStore } from '@/stores'
+import { useStudyStore } from '@/stores'
 import {
   DEFAULT_MINUTES,
   LIBRARY_LABEL,
-  WEEKDAYS,
   adviceText,
   dayLabel,
   dayLoads,
@@ -18,7 +17,6 @@ import {
 import type { PlanDay, StudyPlanResponse } from '@/types'
 import type { DayLoad } from '@/utils/plan'
 
-const content = useContentStore()
 const study = useStudyStore()
 
 const data = ref<StudyPlanResponse | null>(null)
@@ -65,7 +63,7 @@ const summary = computed(() =>
 const reviewShare = computed(() => (plan.value ? reviewShareOf(plan.value) : 0))
 const restNote = computed(() =>
   plan.value && goal.value
-    ? restDayNote(plan.value, plan.value.restCount, goal.value.weeklyRest ?? [])
+    ? restDayNote(plan.value.restCount, goal.value.weeklyRest ?? [])
     : '',
 )
 

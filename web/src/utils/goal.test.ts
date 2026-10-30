@@ -33,7 +33,18 @@ function doc(slug: string, questionCount: number, readingList = false): DocMeta 
 }
 
 function goal(docSlugs: string[], startDay: string, dueDay: string, dailyTarget = 0): Goal {
-  return { docSlugs, startDay, dueDay, dailyTarget, createdAt: '', updatedAt: '' }
+  return {
+    docSlugs,
+    startDay,
+    dueDay,
+    dailyTarget,
+    dailyMinutes: 120,
+    restDays: [],
+    weeklyRest: [],
+    minutesPerItem: {},
+    createdAt: '',
+    updatedAt: '',
+  }
 }
 
 /** 生成相对今天偏移 n 天的日期串 */
@@ -276,8 +287,7 @@ function goalMin(
   startDay: string,
   dueDay: string,
   dailyMinutes: number,
-): Goal {
-  return {
+): Goal {  return {
     docSlugs,
     startDay,
     dueDay,

@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+﻿import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
@@ -207,17 +207,17 @@ test('overloadedDays 找出超预算的日子', () => {
 // ---------- 停滞日 ----------
 
 test('没有停滞日时不显示提示', () => {
-  assert.equal(restDayNote(plan(), 0, []), '')
+  assert.equal(restDayNote(0, []), '')
 })
 
 test('有停滞日时说明已扣除并重排', () => {
-  const s = restDayNote(plan(), 3, [])
+  const s = restDayNote(3, [])
   assert.ok(s.includes('3 个'))
   assert.ok(s.includes('重排'))
 })
 
 test('每周固定休息也写进说明', () => {
-  const s = restDayNote(plan(), 0, [0, 6])
+  const s = restDayNote(0, [0, 6])
   assert.ok(s.includes('日'))
   assert.ok(s.includes('六'))
 })

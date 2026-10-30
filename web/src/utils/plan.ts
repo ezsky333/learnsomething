@@ -141,7 +141,7 @@ export function overloadedDays(plan: StudyPlan): PlanDay[] {
  *
  * 加了停滞日会让计划整体后移，用户需要知道「代价」，否则会以为设置没生效。
  */
-export function restDayNote(plan: StudyPlan, restCount: number, weeklyRest: number[]): string {
+export function restDayNote(restCount: number, weeklyRest: number[]): string {
   if (restCount === 0 && weeklyRest.length === 0) return ''
   const parts: string[] = []
   if (restCount > 0) parts.push(`${restCount} 个停滞日`)

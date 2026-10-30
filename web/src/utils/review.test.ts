@@ -50,6 +50,8 @@ function plan(over: Partial<ReviewPlan> = {}): ReviewPlan {
     nextDueDay: '',
     stages: 7,
     intakePerDay: 0,
+    ahead: 0,
+    aheadTotal: 0,
     ...over,
   }
 }

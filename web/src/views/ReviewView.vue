@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
@@ -10,7 +10,6 @@ import {
   dueLabel,
   finishedHeadline,
   loadHeights,
-  nextLabel,
   overloadWarning,
   queueHeadline,
   stageLabel,
