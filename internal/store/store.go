@@ -63,8 +63,24 @@ type Goal struct {
 	WeeklyRest []int    `json:"weeklyRest"`
 	// MinutesPerItem 是各库「学一条」的分钟数，算法与八股差异很大，必须分开。
 	MinutesPerItem map[string]int `json:"minutesPerItem"`
-	CreatedAt      string         `json:"createdAt"`
-	UpdatedAt      string         `json:"updatedAt"`
+	// Windows 是每日时间窗（例如「上午」只学算法、「下午」复习+八股）。
+	//
+	// 为空时退化为「一天一个总预算」。真实场景里时间窗是硬约束：
+	// 算法必须脑子清醒时啃，不能摊到全天。
+	Windows []PlanWindow `json:"windows"`
+	CreatedAt string     `json:"createdAt"`
+	UpdatedAt string     `json:"updatedAt"`
+}
+
+// PlanWindow 是一个每日时间窗。
+type PlanWindow struct {
+	Name string `json:"name"`
+	// Minutes 是该窗可用分钟数。
+	Minutes int `json:"minutes"`
+	// Libs 是该窗允许处理的库；空表示不限。
+	Libs []string `json:"libs"`
+	// ReviewOnly 为 true 时该窗只做复习。
+	ReviewOnly bool `json:"reviewOnly"`
 }
 
 // Snapshot 是一次全量同步的载荷。

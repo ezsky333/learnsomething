@@ -66,6 +66,17 @@ export interface Note {
   createdDay: string
 }
 
+/** 一个每日时间窗（上午只学算法 / 下午复习+八股）。 */
+export interface PlanWindow {
+  name: string
+  /** 该窗可用分钟数 */
+  minutes: number
+  /** 该窗允许处理的库；空数组表示不限 */
+  libs: string[]
+  /** 只做复习，不学新内容 */
+  reviewOnly: boolean
+}
+
 /** 学习任务：选中的模块 + 截止日期 + 每天的可用时间。 */
 export interface Goal {
   docSlugs: string[]
@@ -81,8 +92,18 @@ export interface Goal {
   weeklyRest: number[]
   /** 各内容库「学一条」的分钟数，算法与八股差异很大 */
   minutesPerItem: Record<string, number>
+  /** 每日时间窗；为空时按「一天一个总时间」算 */
+  windows?: PlanWindow[]
   createdAt: string
   updatedAt: string
+}
+
+/** 把历史「已掌握」纳入复习的结果。 */
+export interface BackfillResult {
+  added: number
+  skipped: number
+  total: number
+  overdue: number
 }
 
 // ---------- 学习计划推算 ----------

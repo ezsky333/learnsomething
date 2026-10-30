@@ -1,4 +1,4 @@
-package server
+﻿package server
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ls "learnsomething"
+	"learnsomething/internal/plan"
 	"learnsomething/internal/config"
 	"learnsomething/internal/store"
 )
@@ -573,5 +574,166 @@ func TestReviewRequiresAuth(t *testing.T) {
 		if w := do(t, h, c.method, c.path, c.body, nil); w.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s 未登录应 401，实际 %d", c.method, c.path, w.Code)
 		}
+	}
+}
+
+// ---------- 历史进度纳入复习 ----------
+
+func TestBackfillAPI(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	// 标记两条已掌握（会自动入列）
+	for _, item := range []string{"q1", "q2"} {
+		do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"`+item+`","status":2}`, cookie)
+	}
+	// 清空复习计划，模拟「旧库升级」（表空但进度在）
+	do(t, h, "DELETE", "/api/review", "", cookie)
+
+	w := do(t, h, "GET", "/api/review", "", cookie)
+	plan := store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if plan.Enrolled != 0 {
+		t.Fatalf("清空后应无在籍内容，实际 %d", plan.Enrolled)
+	}
+
+	// 一键补录
+	w = do(t, h, "POST", "/api/review/backfill", "", cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("补录应 200，实际 %d %s", w.Code, w.Body.String())
+	}
+	var res store.BackfillResult
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Added != 2 {
+		t.Fatalf("应纳入 2 条，实际 %d", res.Added)
+	}
+	if res.Total != 2 {
+		t.Fatalf("总数应为 2，实际 %d", res.Total)
+	}
+
+	// 计划里能看到
+	w = do(t, h, "GET", "/api/review", "", cookie)
+	plan = store.ReviewPlan{}
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if plan.Enrolled != 2 {
+		t.Fatalf("补录后应有 2 条在籍，实际 %d", plan.Enrolled)
+	}
+
+	// 再补一次应全跳过
+	w = do(t, h, "POST", "/api/review/backfill", "", cookie)
+	res = store.BackfillResult{}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if res.Added != 0 || res.Skipped != 2 {
+		t.Fatalf("重复补录应全跳过: added=%d skipped=%d", res.Added, res.Skipped)
+	}
+}
+
+func TestBackfillRequiresAuth(t *testing.T) {
+	_, h := newTestServer(t)
+	if w := do(t, h, "POST", "/api/review/backfill", "", nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录应 401，实际 %d", w.Code)
+	}
+}
+
+// ---------- 时间窗透传到计划推算 ----------
+
+func TestGoalAcceptsWindows(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	due := time.Now().AddDate(0, 1, 0).Format("2006-01-02")
+	body := `{"docSlugs":["java","algo-array"],"dueDay":"` + due + `",
+		"dailyMinutes":150,
+		"minutesPerItem":{"interview":5,"algo":25},
+		"windows":[{"name":"morning","minutes":60,"libs":["algo"]},
+		           {"name":"evening","minutes":90,"libs":["interview"]}]}`
+
+	w := do(t, h, "PUT", "/api/goal", body, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("保存带时间窗的任务失败: %d %s", w.Code, w.Body.String())
+	}
+	var g store.Goal
+	if err := json.Unmarshal(w.Body.Bytes(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Windows) != 2 {
+		t.Fatalf("应保存 2 个时间窗，实际 %d", len(g.Windows))
+	}
+	if g.Windows[0].Name != "morning" || g.Windows[0].Minutes != 60 {
+		t.Fatalf("时间窗内容不对: %+v", g.Windows[0])
+	}
+	if len(g.Windows[0].Libs) != 1 || g.Windows[0].Libs[0] != "algo" {
+		t.Fatalf("上午窗应只含 algo: %+v", g.Windows[0].Libs)
+	}
+}
+
+func TestGoalWindowValidation(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+	due := time.Now().AddDate(0, 1, 0).Format("2006-01-02")
+
+	cases := []struct{ name, body string }{
+		{"空名称", `{"docSlugs":["java"],"dueDay":"` + due + `","windows":[{"name":"","minutes":60}]}`},
+		{"负数分钟", `{"docSlugs":["java"],"dueDay":"` + due + `","windows":[{"name":"m","minutes":-1}]}`},
+		{"超长分钟", `{"docSlugs":["java"],"dueDay":"` + due + `","windows":[{"name":"m","minutes":2000}]}`},
+	}
+	for _, c := range cases {
+		if w := do(t, h, "PUT", "/api/goal", c.body, cookie); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s 应 400，实际 %d", c.name, w.Code)
+		}
+	}
+}
+
+// 计划接口应真的按时间窗算：算法只能落在上午窗。
+func TestPlanRespectsWindows(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	due := time.Now().AddDate(0, 3, 0).Format("2006-01-02")
+	body := `{"docSlugs":["java","algo-array"],"dueDay":"` + due + `",
+		"dailyMinutes":150,
+		"minutesPerItem":{"interview":5,"algo":25},
+		"windows":[{"name":"morning","minutes":60,"libs":["algo"]},
+		           {"name":"evening","minutes":90,"libs":["interview"]}]}`
+	if w := do(t, h, "PUT", "/api/goal", body, cookie); w.Code != http.StatusOK {
+		t.Fatalf("保存失败: %d %s", w.Code, w.Body.String())
+	}
+
+	w := do(t, h, "GET", "/api/plan", "", cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("计划接口失败: %d %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		HasGoal bool        `json:"hasGoal"`
+		Plan    plan.Result `json:"plan"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.HasGoal {
+		t.Fatal("应有任务")
+	}
+	if len(resp.Plan.Days) == 0 {
+		t.Fatal("应排出天数")
+	}
+
+	// 上午窗 60 分钟、算法 25 分钟/条 → 每天最多 2 条新算法
+	for _, d := range resp.Plan.Days {
+		if d.Rest {
+			continue
+		}
+		if d.New["algo"] > 2 {
+			t.Fatalf("%s 上午窗 60 分钟最多学 2 条算法，实际 %d", d.Day, d.New["algo"])
+		}
+	}
+	// 算法必须真的被安排了
+	total := 0
+	for _, d := range resp.Plan.Days {
+		total += d.New["algo"]
+	}
+	if total == 0 {
+		t.Fatal("算法一条都没排进去（时间窗没生效）")
 	}
 }

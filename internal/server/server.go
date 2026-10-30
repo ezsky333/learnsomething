@@ -93,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/review/grade", s.auth(s.handleGradeReview))
 	mux.HandleFunc("PUT /api/review/config", s.auth(s.handlePutReviewConfig))
 	mux.HandleFunc("POST /api/review/reset", s.auth(s.handleResetReview))
+	mux.HandleFunc("POST /api/review/backfill", s.auth(s.handleBackfillReviews))
 	mux.HandleFunc("DELETE /api/review", s.auth(s.handleClearReviews))
 
 	// 内容
@@ -397,6 +398,8 @@ type goalReq struct {
 	WeeklyRest []int    `json:"weeklyRest"`
 	// MinutesPerItem 各库学一条的分钟数（算法远高于八股）。
 	MinutesPerItem map[string]int `json:"minutesPerItem"`
+	// Windows 是每日时间窗，为空时按 DailyMinutes 一个总预算算。
+	Windows []store.PlanWindow `json:"windows"`
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -461,6 +464,16 @@ func (s *Server) handlePutGoal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	for _, win := range req.Windows {
+		if win.Name == "" {
+			writeErr(w, http.StatusBadRequest, "时间窗必须有名称")
+			return
+		}
+		if win.Minutes < 0 || win.Minutes > 1440 {
+			writeErr(w, http.StatusBadRequest, "时间窗「"+win.Name+"」的分钟数应在 0~1440 之间")
+			return
+		}
+	}
 
 	goal, err := s.store.SetGoal(store.Goal{
 		DocSlugs:       req.DocSlugs,
@@ -471,6 +484,7 @@ func (s *Server) handlePutGoal(w http.ResponseWriter, r *http.Request) {
 		RestDays:       req.RestDays,
 		WeeklyRest:     req.WeeklyRest,
 		MinutesPerItem: req.MinutesPerItem,
+		Windows:        req.Windows,
 	})
 	if err != nil {
 		s.fail(w, "保存学习任务", err)
@@ -546,6 +560,29 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 		RestDays:     goal.RestDays,
 		WeeklyRest:   goal.WeeklyRest,
 	}
+
+	// 时间窗：有配置就按窗排期（上午算法 / 下午复习+八股），
+	// 否则退化成「一天一个总预算」。这一步不做的话，界面算出来的算法进度
+	// 会明显乐观 —— 它会把算法摊到全天，而用户下午根本啃不动算法。
+	for _, w := range goal.Windows {
+		if w.Minutes <= 0 {
+			continue
+		}
+		in.Windows = append(in.Windows, plan.Window{
+			Name:       w.Name,
+			Minutes:    w.Minutes,
+			ReviewOnly: w.ReviewOnly,
+			Libs:       w.Libs,
+		})
+	}
+	// 有窗时总预算取各窗之和，避免 Recommend 拿 DailyMinutes 算出错误结论
+	if len(in.Windows) > 0 {
+		total := 0
+		for _, w := range in.Windows {
+			total += w.Minutes
+		}
+		in.DailyMinutes = total
+	}
 	if in.DailyMinutes <= 0 {
 		in.DailyMinutes = 120
 	}
@@ -567,6 +604,8 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 			Remaining:      left,
 			MinutesPerItem: minutes,
 			ReviewCap:      libReviewCap[lib],
+			// 算法这类需要清醒头脑的内容，只允许排在专属时间窗（上午）。
+			OnlyWindow: onlyWindowOf(goal.Windows, lib),
 		})
 	}
 
@@ -598,6 +637,32 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 		"advice":  rec,
 		"libs":    libRemaining,
 	})
+}
+
+// onlyWindowOf 判断某库是否被某个时间窗「独占」。
+//
+// 若只有一个窗允许这个库的新内容，就把该窗名作为它的 OnlyWindow，
+// 保证排期只往那里放。没有窗、或有多个窗可选时返回空（不限）。
+func onlyWindowOf(windows []store.PlanWindow, lib string) string {
+	var found []string
+	for _, w := range windows {
+		if w.ReviewOnly || w.Minutes <= 0 {
+			continue
+		}
+		if len(w.Libs) == 0 {
+			continue // 不限库的窗不构成独占
+		}
+		for _, l := range w.Libs {
+			if l == lib {
+				found = append(found, w.Name)
+				break
+			}
+		}
+	}
+	if len(found) == 1 {
+		return found[0]
+	}
+	return ""
 }
 
 // defaultReviewCap 是各库每天最多安排多少条复习。
@@ -803,6 +868,22 @@ func (s *Server) handleClearReviews(w http.ResponseWriter, r *http.Request) {
 	}
 	s.bumpRevision()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleBackfillReviews 把「已掌握」但还没进复习计划的内容批量纳入。
+//
+// 用途：升级到带复习模块的版本后，升级前的历史进度不会被自动扫到，
+// 用户点一下就能全部补齐，而不用一条条重新标记。
+func (s *Server) handleBackfillReviews(w http.ResponseWriter, r *http.Request) {
+	res, err := s.store.BackfillReviews(time.Now().Format("2006-01-02"))
+	if err != nil {
+		s.fail(w, "纳入复习计划", err)
+		return
+	}
+	if res.Added > 0 {
+		s.bumpRevision()
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // ---------- 内容接口 ----------

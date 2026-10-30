@@ -1,13 +1,15 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/api/client'
 import type {
+  BackfillResult,
   Doc,
   DocMeta,
   Goal,
   Library,
   Manifest,
   Note,
+  PlanWindow,
   Progress,
   ReviewGrade,
   ReviewItem,
@@ -380,6 +382,13 @@ export const useStudyStore = defineStore('study', () => {
     reviewMap.value = {}
   }
 
+  /** 把「已掌握」但还没进复习计划的历史内容批量纳入。 */
+  async function backfillReviews() {
+    const res = await api.post<BackfillResult>('/api/review/backfill', {})
+    if (res.added > 0) await refresh()
+    return res
+  }
+
   // ---------- 学习任务 ----------
 
   async function saveGoal(input: {
@@ -390,6 +399,7 @@ export const useStudyStore = defineStore('study', () => {
     restDays: string[]
     weeklyRest: number[]
     minutesPerItem: Record<string, number>
+    windows?: PlanWindow[]
   }) {
     const saved = await api.put<Goal>('/api/goal', input)
     goal.value = saved
@@ -441,6 +451,7 @@ export const useStudyStore = defineStore('study', () => {
     saveReviewConfig,
     resetReview,
     clearReviews,
+    backfillReviews,
   }
 })
 

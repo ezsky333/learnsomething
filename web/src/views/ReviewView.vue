@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
@@ -32,6 +32,37 @@ const grading = ref(false)
 const done = ref(false)
 /** 提前复习的天数窗口：0 = 只看今天到期的 */
 const aheadWindow = ref(0)
+/** 历史进度补录 */
+const backfilling = ref(false)
+const backfillHint = ref('')
+
+/**
+ * 把「已掌握」但还没进复习计划的内容批量纳入。
+ *
+ * 升级到带复习模块的版本后，升级前的历史进度不会被自动扫到 ——
+ * 这个按钮就是给那种情况准备的，免得用户一条条重新标记。
+ */
+async function doBackfill() {
+  backfilling.value = true
+  error.value = ''
+  try {
+    const res = await study.backfillReviews()
+    if (res.added === 0 && res.total === 0) {
+      backfillHint.value = '还没有任何「已掌握」的内容，先去学几道再回来。'
+    } else if (res.added === 0) {
+      backfillHint.value = `全部 ${res.total} 条已掌握内容都已在复习计划里。`
+    } else {
+      backfillHint.value =
+        `已纳入 ${res.added} 条` +
+        (res.overdue > 0 ? `，其中 ${res.overdue} 条按原学习日期已经逾期，会优先安排补上。` : '。')
+    }
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '纳入失败'
+  } finally {
+    backfilling.value = false
+  }
+}
 
 async function load(ahead = aheadWindow.value) {
   loading.value = true
@@ -356,7 +387,24 @@ const toneClass: Record<GradeAction['tone'], string> = {
       <p v-if="plan && plan.nextDueDay && plan.dueTotal === 0" class="mt-2 text-xs text-fg-dim">
         下次复习：{{ plan.nextDueDay }}
       </p>
+
+      <!-- 历史进度还没进复习计划时，给一个一键补齐的入口 -->
+      <p
+        v-if="plan && plan.enrolled === 0 && backfillHint"
+        class="mx-auto mt-3 max-w-md rounded-lg bg-accent-soft px-3 py-2 text-[11px] leading-relaxed text-accent"
+      >
+        {{ backfillHint }}
+      </p>
+
       <div class="mt-4 flex flex-wrap justify-center gap-2">
+        <button
+          v-if="plan && plan.enrolled === 0 && !backfillHint"
+          class="btn btn-primary text-xs"
+          :disabled="backfilling"
+          @click="doBackfill"
+        >
+          {{ backfilling ? '纳入中…' : '把已学内容纳入复习计划' }}
+        </button>
         <button
           v-if="plan && plan.enrolled > 0"
           class="btn btn-primary text-xs"

@@ -1,10 +1,10 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useContentStore, useStudyStore } from '@/stores'
 import { computeGoalProgress, daysBetween, formatDay, paceOf, today } from '@/utils/goal'
 import type { ModuleProgress, PaceLevel } from '@/utils/goal'
 import { DEFAULT_MINUTES, LIBRARY_LABEL, WEEKDAYS } from '@/utils/plan'
-import type { DocMeta } from '@/types'
+import type { DocMeta, PlanWindow } from '@/types'
 
 const content = useContentStore()
 const study = useStudyStore()
@@ -24,6 +24,25 @@ const draftPerItem = ref<Record<string, number>>({ ...DEFAULT_MINUTES })
 const newRestDay = ref('')
 const advancedOpen = ref(false)
 
+/** 时间窗：上午只学算法、下午复习+八股。 */
+const draftWindows = ref<PlanWindow[]>([])
+const windowsOpen = ref(false)
+
+/** 默认时间窗：上午 60 分（只算法）、下午 90 分（复习+其余）。 */
+function defaultWindows(): PlanWindow[] {
+  return [
+    { name: 'morning', minutes: 60, libs: ['algo'], reviewOnly: false },
+    { name: 'evening', minutes: 90, libs: ['interview', 'ai'], reviewOnly: false },
+  ]
+}
+
+/** 总可用时间：有窗时取各窗之和。 */
+const totalMinutes = computed(() =>
+  draftWindows.value.length > 0
+    ? draftWindows.value.reduce((s, w) => s + (w.minutes || 0), 0)
+    : draftMinutes.value,
+)
+
 // 默认截止日：今天 + 30 天
 function defaultDue(): string {
   const d = new Date()
@@ -42,9 +61,37 @@ watch(
     draftRestDays.value = g ? [...(g.restDays ?? [])] : []
     draftWeeklyRest.value = g ? [...(g.weeklyRest ?? [])] : []
     draftPerItem.value = { ...DEFAULT_MINUTES, ...(g?.minutesPerItem ?? {}) }
+    draftWindows.value = g?.windows && g.windows.length > 0
+      ? g.windows.map((w) => ({ ...w, libs: [...(w.libs ?? [])] }))
+      : []
   },
   { immediate: true },
 )
+
+/** 启用时间窗模式（把当前的总时间拆成上午/下午）。 */
+function enableWindows() {
+  draftWindows.value = defaultWindows()
+  windowsOpen.value = true
+}
+
+function disableWindows() {
+  draftWindows.value = []
+  windowsOpen.value = false
+}
+
+function addWindow() {
+  draftWindows.value.push({ name: 'new', minutes: 60, libs: [], reviewOnly: false })
+}
+
+function removeWindow(i: number) {
+  draftWindows.value.splice(i, 1)
+}
+
+function toggleWindowLib(w: PlanWindow, lib: string) {
+  const i = w.libs.indexOf(lib)
+  if (i >= 0) w.libs.splice(i, 1)
+  else w.libs.push(lib)
+}
 
 /** 选中的模块涉及哪些内容库（决定要暴露几条「每条分钟数」的设置）。 */
 const selectedLibraries = computed(() => {
@@ -169,10 +216,11 @@ async function save() {
       docSlugs: draftSlugs.value,
       dueDay: draftDue.value,
       dailyTarget: Math.max(0, Math.round(draftDaily.value)),
-      dailyMinutes: Math.max(0, Math.round(draftMinutes.value)),
+      dailyMinutes: Math.max(0, Math.round(totalMinutes.value)),
       restDays: draftRestDays.value,
       weeklyRest: draftWeeklyRest.value,
       minutesPerItem: draftPerItem.value,
+      windows: draftWindows.value,
     })
     open.value = false
   } catch (e) {
@@ -465,7 +513,7 @@ function modulePaceText(m: ModuleProgress): string {
           <span class="mb-1 block text-[11px] text-fg-dim">预计完成日期</span>
           <input v-model="draftDue" type="date" :min="today()" class="field py-1.5 text-xs" />
         </label>
-        <label class="block">
+        <label v-if="draftWindows.length === 0" class="block">
           <span class="mb-1 block text-[11px] text-fg-dim">
             每天能投入多少分钟
           </span>
@@ -478,6 +526,90 @@ function modulePaceText(m: ModuleProgress): string {
             class="field py-1.5 text-xs"
           />
         </label>
+        <div v-else class="block">
+          <span class="mb-1 block text-[11px] text-fg-dim">每天合计（按时间窗）</span>
+          <p class="field flex items-center py-1.5 text-xs text-fg-muted">
+            {{ totalMinutes }} 分钟
+          </p>
+        </div>
+      </div>
+
+      <!-- 时间窗：上午学算法、下午复习+八股 -->
+      <div class="mt-3 rounded-lg bg-panel-soft px-3 py-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-medium text-fg-muted">
+            按时间段分开安排（上午学算法 / 下午复习+八股）
+          </span>
+          <button
+            v-if="draftWindows.length === 0"
+            class="text-[10px] text-accent hover:underline"
+            @click="enableWindows"
+          >
+            启用
+          </button>
+          <button v-else class="text-[10px] text-fg-dim hover:text-fg" @click="disableWindows">
+            取消分段
+          </button>
+        </div>
+
+        <div v-if="draftWindows.length > 0" class="mt-2 space-y-2">
+          <div
+            v-for="(w, i) in draftWindows"
+            :key="i"
+            class="rounded-lg border border-line bg-panel px-2.5 py-2"
+          >
+            <div class="flex flex-wrap items-center gap-1.5">
+              <input
+                v-model="w.name"
+                class="field w-20 py-0.5 text-[11px]"
+                placeholder="名称"
+              />
+              <input
+                v-model.number="w.minutes"
+                type="number"
+                min="0"
+                max="1440"
+                step="5"
+                class="field w-16 py-0.5 text-[11px]"
+              />
+              <span class="text-[10px] text-fg-dim">分钟</span>
+              <label class="ml-1 flex items-center gap-1 text-[10px] text-fg-dim">
+                <input v-model="w.reviewOnly" type="checkbox" class="h-3 w-3 accent-[var(--color-accent)]" />
+                只复习
+              </label>
+              <button
+                class="ml-auto text-[10px] text-fg-dim hover:text-red-500"
+                @click="removeWindow(i)"
+              >
+                删除
+              </button>
+            </div>
+            <div v-if="!w.reviewOnly" class="mt-1 flex flex-wrap items-center gap-1">
+              <span class="text-[10px] text-fg-dim">学哪些：</span>
+              <button
+                v-for="lib in ['interview', 'algo', 'ai']"
+                :key="lib"
+                class="rounded px-1.5 py-0.5 text-[10px] transition-colors"
+                :class="
+                  w.libs.includes(lib)
+                    ? 'bg-accent text-accent-fg'
+                    : 'bg-line text-fg-muted hover:bg-line-strong'
+                "
+                @click="toggleWindowLib(w, lib)"
+              >
+                {{ LIBRARY_LABEL[lib] }}
+              </button>
+              <span v-if="w.libs.length === 0" class="text-[10px] text-fg-dim">（不限）</span>
+            </div>
+          </div>
+          <button class="text-[10px] text-accent hover:underline" @click="addWindow">
+            + 加一个时间段
+          </button>
+          <p class="text-[10px] leading-relaxed text-fg-dim">
+            只有「学哪些」里勾选的库能在这个时间段学新内容。算法建议只放上午 ——
+            下午脑子钝的时候啃算法，效率会很低。
+          </p>
+        </div>
       </div>
 
       <!-- 各库每条耗时：算法和八股根本不是一个速度 -->

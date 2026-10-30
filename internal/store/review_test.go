@@ -951,3 +951,187 @@ func TestLibCapDefaultsFilled(t *testing.T) {
 		t.Fatalf("读回的配置丢了 LibCap: %+v", got)
 	}
 }
+
+// ---------- 历史进度纳入复习（升级旧库时用） ----------
+
+// 升级到带复习模块的版本时，升级前的「已掌握」不会自动入列。
+// BackfillReviews 负责补上这一批，且必须按原始完成日排期。
+func TestBackfillReviews(t *testing.T) {
+	s := newStore(t)
+	today := "2026-03-20"
+
+	// 模拟旧库：直接写 progress 行，绕过 SetProgress（否则会自动入列）
+	rows := []struct{ doc, item, day string }{
+		{"java", "q1", "2026-03-01"},
+		{"java", "q2", "2026-03-05"},
+		{"algo-array", "a1", "2026-03-10"},
+	}
+	for _, r := range rows {
+		if _, err := s.db.Exec(`INSERT INTO progress(doc_id,item_id,status,starred,updated_at,done_day)
+			VALUES(?,?,2,0,'2026-03-10T00:00:00Z',?)`, r.doc, r.item, r.day); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 确认还没入列
+	if _, err := s.GetReview("java", "q1"); err != ErrNotFound {
+		t.Fatalf("补录前不该在计划里: %v", err)
+	}
+
+	res, err := s.BackfillReviews(today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Added != 3 {
+		t.Fatalf("应纳入 3 条，实际 %d", res.Added)
+	}
+	if res.Total != 3 {
+		t.Fatalf("总数应为 3，实际 %d", res.Total)
+	}
+	if res.Skipped != 0 {
+		t.Fatalf("首次补录不该有跳过，实际 %d", res.Skipped)
+	}
+
+	// 每条都应进计划
+	for _, r := range rows {
+		if _, err := s.GetReview(r.doc, r.item); err != nil {
+			t.Fatalf("%s/%s 应已入列: %v", r.doc, r.item, err)
+		}
+	}
+}
+
+// 关键性质：历史内容的首轮复习按「原始完成日 + 间隔」推算，
+// 而不是一律排到今天 —— 否则几百条历史进度会瞬间压成一天的量。
+func TestBackfillUsesOriginalDoneDay(t *testing.T) {
+	s := newStore(t)
+	today := "2026-03-20"
+
+	// 一条 20 天前完成的
+	if _, err := s.db.Exec(`INSERT INTO progress(doc_id,item_id,status,starred,updated_at,done_day)
+		VALUES('java','old',2,0,'x','2026-03-01')`); err != nil {
+		t.Fatal(err)
+	}
+	// 一条今天完成的
+	if _, err := s.db.Exec(`INSERT INTO progress(doc_id,item_id,status,starred,updated_at,done_day)
+		VALUES('java','new',2,0,'x',?)`, today); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.BackfillReviews(today); err != nil {
+		t.Fatal(err)
+	}
+
+	old, err := s.GetReview("java", "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.GetReview("java", "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 20 天前完成的，首轮复习日应远早于今天（已逾期）
+	if !(old.DueDay < today) {
+		t.Fatalf("20 天前完成的内容应已逾期，实际 dueDay=%s", old.DueDay)
+	}
+	// 今天完成的排在今天之后
+	if !(fresh.DueDay > today) {
+		t.Fatalf("今天完成的内容应排在将来，实际 dueDay=%s", fresh.DueDay)
+	}
+	// 两者不该被压到同一天
+	if old.DueDay == fresh.DueDay {
+		t.Fatalf("不同完成日的内容不该挤在同一天复习")
+	}
+}
+
+// 重复补录是幂等的，不会重复插入或重置已有进度。
+func TestBackfillIdempotent(t *testing.T) {
+	s := newStore(t)
+	today := "2026-03-20"
+	if _, err := s.db.Exec(`INSERT INTO progress(doc_id,item_id,status,starred,updated_at,done_day)
+		VALUES('java','q1',2,0,'x','2026-03-10')`); err != nil {
+		t.Fatal(err)
+	}
+
+	r1, err := s.BackfillReviews(today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.Added != 1 {
+		t.Fatalf("首次应纳入 1 条，实际 %d", r1.Added)
+	}
+
+	// 走一轮复习推进阶段
+	it, _ := s.GetReview("java", "q1")
+	if _, err := s.GradeReview("java", "q1", GradeGood, today); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := s.GetReview("java", "q1")
+	if after.Stage != 1 {
+		t.Fatalf("复习后应在阶段 1，实际 %d", after.Stage)
+	}
+
+	// 再次补录：应全部跳过，且不打回阶段
+	r2, err := s.BackfillReviews(today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.Added != 0 {
+		t.Fatalf("重复补录不该新增，实际 %d", r2.Added)
+	}
+	if r2.Skipped != 1 {
+		t.Fatalf("应跳过 1 条，实际 %d", r2.Skipped)
+	}
+	kept, _ := s.GetReview("java", "q1")
+	if kept.Stage != after.Stage {
+		t.Fatalf("重复补录把阶段打回：%d -> %d", after.Stage, kept.Stage)
+	}
+	_ = it
+}
+
+// 只补「已掌握」的，未开始/学习中的不该进复习。
+func TestBackfillOnlyDone(t *testing.T) {
+	s := newStore(t)
+	today := "2026-03-20"
+	if _, err := s.db.Exec(`INSERT INTO progress(doc_id,item_id,status,starred,updated_at,done_day)
+		VALUES('java','done',2,0,'x',?),('java','learning',1,0,'x',''),('java','unread',0,1,'x','')`,
+		today); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := s.BackfillReviews(today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Added != 1 {
+		t.Fatalf("只该纳入已掌握的 1 条，实际 %d", res.Added)
+	}
+	for _, item := range []string{"learning", "unread"} {
+		if _, err := s.GetReview("java", item); err != ErrNotFound {
+			t.Fatalf("%s 不该被纳入复习", item)
+		}
+	}
+}
+
+// 没记录完成日的历史数据，按今天排，不能崩也不能插空日期。
+func TestBackfillMissingDoneDay(t *testing.T) {
+	s := newStore(t)
+	today := "2026-03-20"
+	if _, err := s.db.Exec(`INSERT INTO progress(doc_id,item_id,status,starred,updated_at,done_day)
+		VALUES('java','nodate',2,0,'x','')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BackfillReviews(today); err != nil {
+		t.Fatal(err)
+	}
+	it, err := s.GetReview("java", "nodate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.DueDay == "" {
+		t.Fatal("应排出复习日期")
+	}
+	if it.DueDay < today {
+		t.Fatalf("没有完成日时应排在今天之后，实际 %s", it.DueDay)
+	}
+}

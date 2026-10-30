@@ -738,6 +738,96 @@ func (s *Store) DropReview(docID, itemID string) error {
 	return err
 }
 
+// BackfillResult 是「把历史进度纳入复习」的结果。
+type BackfillResult struct {
+	// Added 是本次新纳入的条数。
+	Added int `json:"added"`
+	// Skipped 是已经在复习计划里、跳过的条数。
+	Skipped int `json:"skipped"`
+	// Total 是库里「已掌握」的总条数。
+	Total int `json:"total"`
+	// Overdue 是被排到过去的条数（历史内容的首轮复习日期早已过了）。
+	Overdue int `json:"overdue"`
+}
+
+// BackfillReviews 把所有「已掌握」但还不在复习计划里的内容批量纳入。
+//
+// 为什么需要它：入列只挂在「标记已掌握」这个动作上，所以升级到带复习模块的
+// 版本时，升级前就存在的进度不会被扫到 —— 用户的全部历史进度等于没有复习计划。
+//
+// 关键点是**按原始完成日期排首轮复习**，而不是一律排到今天：
+// 学过的内容早就该复习了，把它们全压在今天会瞬间制造几百条的积压，
+// 直接违反「不至于每天堆积太多」的设计前提。按 done_day + 首轮间隔计算，
+// 该逾期就逾期（用户能看到真实欠账），但同时用负载均衡摊到相邻几天。
+func (s *Store) BackfillReviews(today string) (BackfillResult, error) {
+	if today == "" {
+		today = time.Now().Format(dayLayout)
+	}
+	res := BackfillResult{}
+
+	rows, err := s.db.Query(`SELECT p.doc_id, p.item_id, p.done_day
+		FROM progress p
+		LEFT JOIN review r ON r.doc_id = p.doc_id AND r.item_id = p.item_id
+		WHERE p.status = ? AND r.doc_id IS NULL
+		ORDER BY p.done_day, p.doc_id, p.item_id`, StatusDone)
+	if err != nil {
+		return res, err
+	}
+	type row struct{ docID, itemID, doneDay string }
+	var pendingRows []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.docID, &r.itemID, &r.doneDay); err != nil {
+			rows.Close()
+			return res, err
+		}
+		pendingRows = append(pendingRows, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return res, err
+	}
+
+	cfg, err := s.GetReviewConfig()
+	if err != nil {
+		return res, err
+	}
+	gaps := s.stageGaps(today, cfg)
+	firstGap := gapOf(gaps, 0)
+
+	// 统计总已掌握数（含已在计划里的），用于回报
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM progress WHERE status = ?`, StatusDone).
+		Scan(&res.Total); err != nil {
+		return res, err
+	}
+	res.Skipped = res.Total - len(pendingRows)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, r := range pendingRows {
+		// 按原始完成日推首轮复习日期；没记录完成日的按今天算
+		base := r.doneDay
+		if base == "" {
+			base = today
+		}
+		due, err := s.pickDueDay(base, firstGap, cfg.DailyCap)
+		if err != nil {
+			return res, err
+		}
+		if due < today {
+			res.Overdue++
+		}
+		if _, err := s.db.Exec(`INSERT INTO review
+			(doc_id, item_id, stage, lapses, review_count, last_day, due_day, last_grade, graduated, created_at, updated_at)
+			VALUES(?, ?, 0, 0, 0, ?, ?, -1, 0, ?, ?)
+			ON CONFLICT(doc_id, item_id) DO NOTHING`,
+			r.docID, r.itemID, base, due, now, now); err != nil {
+			return res, err
+		}
+		res.Added++
+	}
+	return res, nil
+}
+
 // GetReview 读取一条复习状态。
 func (s *Store) GetReview(docID, itemID string) (ReviewItem, error) {
 	it, err := scanReview(s.db.QueryRow(`SELECT `+reviewCols+` FROM review
