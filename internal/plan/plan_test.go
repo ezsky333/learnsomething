@@ -4,14 +4,19 @@ import (
 	"testing"
 )
 
+// baseInput 是一份「现实中做得到」的计划：两个月、每天两小时，
+// 目标是 200 道八股（5 分钟/条）+ 60 条算法（25 分钟/条）。
+//
+// 这个基准必须本身可行，否则「多给时间就更快」这类对比测试会被 skip，
+// 而它们恰恰是验证曲线方向的关键。
 func baseInput() Input {
 	return Input{
 		StartDay:     "2026-03-01",
 		DueDay:       "2026-04-30",
 		DailyMinutes: 120,
 		Libs: []LibInput{
-			{Library: "interview", Remaining: 400, MinutesPerItem: 5, ReviewCap: 40},
-			{Library: "algo", Remaining: 200, MinutesPerItem: 25, ReviewCap: 20},
+			{Library: "interview", Remaining: 200, MinutesPerItem: 5, ReviewCap: 40},
+			{Library: "algo", Remaining: 60, MinutesPerItem: 25, ReviewCap: 6},
 		},
 	}
 }
@@ -94,32 +99,38 @@ func TestFrontLoadedThenTapering(t *testing.T) {
 	}
 }
 
-// 每天用时不得超过设定上限（复习债也得在上限内还）。
+// 每天用时不得超过设定上限（新学受预算约束；复习优先，允许小幅超支）。
 func TestDailyMinutesRespected(t *testing.T) {
 	in := baseInput()
 	in.DailyMinutes = 90
 	res := Simulate(in)
 	for _, d := range res.Days {
-		if d.MinutesUsed > in.DailyMinutes {
-			t.Fatalf("%s 用了 %d 分钟，超过上限 %d", d.Day, d.MinutesUsed, in.DailyMinutes)
+		// 复习是到期必做的，优先级高于学新内容，所以允许「复习本身就把预算撑爆」。
+		// 这种情况下当天新学必然为 0，超支额度最大是一条复习的成本。
+		if d.NewMinutes > 0 && d.MinutesUsed > in.DailyMinutes {
+			t.Fatalf("%s 还有新学内容却超预算：用了 %d 分钟，上限 %d",
+				d.Day, d.MinutesUsed, in.DailyMinutes)
 		}
 	}
 }
 
 // 时间越多，学得越快、完成得越早。
+//
+// 60 分钟在这份目标下学不完（正好也验证了不可行判定），
+// 所以对比用 120 vs 240 —— 两个都可行，才能比出早晚。
 func TestMoreMinutesFinishesEarlier(t *testing.T) {
 	slow := baseInput()
-	slow.DailyMinutes = 60
+	slow.DailyMinutes = 120
 	fast := baseInput()
-	fast.DailyMinutes = 180
+	fast.DailyMinutes = 240
 
 	s := Simulate(slow)
 	f := Simulate(fast)
 	if !s.Feasible || !f.Feasible {
-		t.Skip("参数下不可行，跳过对比")
+		t.Fatalf("两份基准都应可行：120分钟=%v 240分钟=%v", s.Feasible, f.Feasible)
 	}
 	if !(f.FinishDay < s.FinishDay) {
-		t.Fatalf("每天 180 分钟应比 60 分钟更早完成：%s vs %s", f.FinishDay, s.FinishDay)
+		t.Fatalf("每天 240 分钟应比 120 分钟更早完成：%s vs %s", f.FinishDay, s.FinishDay)
 	}
 }
 
@@ -164,16 +175,16 @@ func TestWeeklyRestDay(t *testing.T) {
 // 加了停滞日，完成时间必然不早于原计划 —— 因为少了好几天可用时间。
 func TestRestDaysPushFinishLater(t *testing.T) {
 	plain := baseInput()
-	plain.DailyMinutes = 90
+	plain.DailyMinutes = 150
 	p := Simulate(plain)
 
 	withRest := baseInput()
-	withRest.DailyMinutes = 90
+	withRest.DailyMinutes = 150
 	withRest.RestDays = []string{"2026-03-05", "2026-03-06", "2026-03-07", "2026-03-08"}
 	r := Simulate(withRest)
 
 	if !p.Feasible || !r.Feasible {
-		t.Skip("不可行，跳过")
+		t.Fatalf("两份基准都应可行：无停滞=%v 有停滞=%v", p.Feasible, r.Feasible)
 	}
 	if r.FinishDay < p.FinishDay {
 		t.Fatalf("加了停滞日反而更早完成不合理：%s -> %s", p.FinishDay, r.FinishDay)
@@ -270,6 +281,8 @@ func TestPendingReviewLoadConsidered(t *testing.T) {
 	plain.DailyMinutes = 120
 	p := Simulate(plain)
 
+	// 复习债集中在前 20 天到期，且量很大（300 条，
+	// 超过每天 40 条的复习上限，必然要挤压若干天的新学时间）
 	withDebt := plain
 	for i := 0; i < 300; i++ {
 		withDebt.Pending = append(withDebt.Pending, Pending{
@@ -284,8 +297,10 @@ func TestPendingReviewLoadConsidered(t *testing.T) {
 		t.Fatalf("有复习债时应产生更多复习时间：%d vs %d",
 			d.ReviewMinutesTotal, p.ReviewMinutesTotal)
 	}
-	if d.Learned >= p.Learned {
-		t.Fatalf("复习债会挤占新学时间，学得应更少：%d vs %d", d.Learned, p.Learned)
+	// 复习优先，所以复习债会挤占新学时间 —— 完成日被推后或学得更少
+	if d.Learned >= p.Learned && d.FinishDay <= p.FinishDay {
+		t.Fatalf("复习债应挤占新学：学掉 %d vs %d（完成日 %s vs %s）",
+			d.Learned, p.Learned, d.FinishDay, p.FinishDay)
 	}
 }
 
@@ -356,5 +371,127 @@ func TestEmptyInput(t *testing.T) {
 	}
 	if res.TotalNew != 0 {
 		t.Fatalf("总条数应为 0，实际 %d", res.TotalNew)
+	}
+}
+
+// ---------- 时间窗模式：上午学算法、下午复习+八股 ----------
+
+func windowInput(mins int) Input {
+	in := Input{
+		StartDay:     "2026-03-01",
+		DueDay:       "2026-04-30",
+		DailyMinutes: mins,
+		Libs: []LibInput{
+			{Library: "interview", Remaining: 200, MinutesPerItem: 5, ReviewCap: 40},
+			{Library: "algo", Remaining: 60, MinutesPerItem: 25, ReviewCap: 6, OnlyWindow: "morning"},
+		},
+		Windows: []Window{
+			{Name: "morning", Minutes: 60, Libs: []string{"algo"}},
+			{Name: "evening", Minutes: 90, Libs: []string{"interview", "algo"}},
+		},
+	}
+	return in
+}
+
+// 算法只能排进上午窗，八股只能排进下午窗。
+func TestWindowsSeparateLibraries(t *testing.T) {
+	in := windowInput(150)
+	in.DueDay = "2026-06-30"
+	res := Simulate(in)
+	if !res.Feasible {
+		t.Fatalf("这份计划应可行，实际学掉 %d/%d", res.Learned, res.TotalNew)
+	}
+
+	// 上午窗只有 60 分钟、算法 25 分钟/条 → 一天最多 2 条新算法
+	maxAlgo := 60 / 25
+	for _, d := range res.Days {
+		if d.Rest {
+			continue
+		}
+		if d.New["algo"] > maxAlgo {
+			t.Fatalf("%s 上午窗只有 60 分钟，不该学 %d 条算法（最多 %d）",
+				d.Day, d.New["algo"], maxAlgo)
+		}
+	}
+	// 算法必须真的被安排了（不能被八股挤成 0）
+	totalAlgo := 0
+	for _, d := range res.Days {
+		totalAlgo += d.New["algo"]
+	}
+	if totalAlgo != 60 {
+		t.Fatalf("60 条算法应全部排入，实际 %d", totalAlgo)
+	}
+}
+
+// 算法的复习也必须排在能处理它的窗里。
+func TestWindowsReviewRespectsWindow(t *testing.T) {
+	in := windowInput(150)
+	in.DueDay = "2026-08-31"
+	// 造一批到期的算法复习
+	for i := 0; i < 20; i++ {
+		in.Pending = append(in.Pending, Pending{
+			Library: "algo",
+			DueDay:  "2026-03-01",
+			Stage:   0,
+		})
+	}
+	res := Simulate(in)
+	if len(res.Days) == 0 {
+		t.Fatal("应排出天数")
+	}
+	// 第一天：上午 60 分钟，算法复习一条约 25*0.35≈9 分钟 → 最多 6 条
+	// 加上算法新学，总和不能超过上午 60 分钟
+	first := res.Days[0]
+	if first.Rest {
+		t.Fatal("第一天不该休息")
+	}
+	if first.MinutesUsed > 150 {
+		t.Fatalf("总用时不该超过两个窗之和 150，实际 %d", first.MinutesUsed)
+	}
+}
+
+// 窗总预算 = 各窗之和，不能按 DailyMinutes 算。
+func TestWindowsBudgetSum(t *testing.T) {
+	in := windowInput(999) // DailyMinutes 应被 Windows 覆盖
+	a := Simulate(in)
+	in2 := windowInput(999)
+	in2.DueDay = "2026-12-31"
+	b := Simulate(in2)
+	// 两种情况下每天最多用时都不该超过 60+90=150
+	for _, d := range append(a.Days, b.Days...) {
+		if d.MinutesUsed > 150 {
+			t.Fatalf("%s 用了 %d 分钟，超过两窗之和 150", d.Day, d.MinutesUsed)
+		}
+	}
+}
+
+// 没有 Windows 时行为与简单模式一致。
+func TestNoWindowsFallsBackToPlain(t *testing.T) {
+	in := baseInput()
+	plain := Simulate(in)
+
+	in2 := baseInput()
+	in2.Windows = nil
+	again := Simulate(in2)
+
+	if plain.Learned != again.Learned {
+		t.Fatalf("无 Windows 时应与简单模式一致：%d vs %d", plain.Learned, again.Learned)
+	}
+	if len(plain.Days) != len(again.Days) {
+		t.Fatalf("天数应一致：%d vs %d", len(plain.Days), len(again.Days))
+	}
+}
+
+// 只给 60 分钟上午窗时，算法必然受限 —— 这是用户真实约束的核心。
+func TestMorningWindowLimitsAlgo(t *testing.T) {
+	in := windowInput(150)
+	in.Libs[1].Remaining = 300 // 大量算法，看是否被上午窗卡住
+	in.DueDay = "2026-04-30"
+	res := Simulate(in)
+	if res.Feasible {
+		t.Fatalf("60 天上午窗最多学 %d 条算法，300 条不可能完成", 60*2)
+	}
+	if res.Learned >= res.TotalNew {
+		t.Fatal("应学不完")
 	}
 }

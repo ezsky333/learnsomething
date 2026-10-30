@@ -20,9 +20,17 @@ const dayLayout = "2006-01-02"
 // maxHorizon 是模拟的最大天数，防止参数异常时死循环。
 const maxHorizon = 1500
 
-// reviewFactor 是「复习一条的成本 / 首次学习一条的成本」，按阶段递减：
-// 第一次回头看几乎要从头回忆，最费劲；越往后越省。
-var reviewFactor = []float64{0.6, 0.5, 0.45, 0.4, 0.35, 0.3, 0.3}
+// reviewFactor 是「复习一条的成本 / 首次学习一条的成本」，按阶段递减。
+//
+// 取值依据：第一次回头看时忘得最多，但仍是**回忆与核对**，不是重新学一遍，
+// 所以约 1/3；越往后越是维护性巩固，降到 1/10 左右。
+// 整条阶梯累计约 1.27 倍 —— 即「学一条内容，一生要再花 1.27 倍的时间复习」。
+//
+// 这个系数直接决定计划可行性，不能拍脑袋：
+// 若取成 2.9（把每次复习都当重学），任何真实目标都会被判成不可行，
+// 那这个功能就没用了。也不能取成 0.5，那会把复习负担算没，
+// 结果就是「计划看着很美，做到一半发现来不及」。
+var reviewFactor = []float64{0.35, 0.25, 0.20, 0.15, 0.12, 0.10, 0.10}
 
 // fallbackIntervals 是调用方没给间隔时用的艾宾浩斯阶梯。
 var fallbackIntervals = []int{1, 2, 4, 7, 15, 30, 60}
@@ -64,6 +72,12 @@ type LibInput struct {
 	Remaining      int    `json:"remaining"`
 	MinutesPerItem int    `json:"minutesPerItem"`
 	ReviewCap      int    `json:"reviewCap"`
+	// OnlyWindow 非空时，这个库的新内容只能排进指定时间窗。
+	//
+	// 真实场景里的约束就是这么来的：算法必须脑子清醒时啃（上午），
+	// 八股和复习可以放到疲惫时段（下午）。不建模这个约束，
+	// 算出来的计划会把算法摊到全天，而用户根本做不到。
+	OnlyWindow string `json:"onlyWindow"`
 }
 
 // Pending 是一条已进入复习计划、尚未到期复习的内容。
@@ -71,6 +85,20 @@ type Pending struct {
 	Library string `json:"library"`
 	DueDay  string `json:"dueDay"`
 	Stage   int    `json:"stage"`
+}
+
+// Window 是一个时间窗（比如「上午」）。
+//
+// 复习也受时间窗约束：算法的复习和学新算法一样费脑子，不能排到下午。
+type Window struct {
+	// Name 是窗口标识，和 LibInput.OnlyWindow 对应。
+	Name string `json:"name"`
+	// Minutes 是这个窗口的可用人分钟数。
+	Minutes int `json:"minutes"`
+	// ReviewOnly 为 true 时该窗口只做复习，不学新内容。
+	ReviewOnly bool `json:"reviewOnly"`
+	// Libs 非空时，该窗口只处理这些库的复习。
+	Libs []string `json:"libs"`
 }
 
 // Input 是推算所需的一切。
@@ -83,6 +111,9 @@ type Input struct {
 	Libs         []LibInput `json:"libs"`
 	Pending      []Pending  `json:"-"`
 	Intervals    []int      `json:"-"`
+	// Windows 非空时按时间窗排期（上午/下午各自独立预算）；
+	// 为空则退化成「一天一个总预算」的简单模式。
+	Windows []Window `json:"-"`
 }
 
 // DayPlan 是计划里的一天。
@@ -206,65 +237,25 @@ func Simulate(in Input) Result {
 		}
 		res.StudyDays++
 
-		// ---- 1. 先还复习债 ----
-		dueIdx := make([]int, 0, len(pend))
-		for i, p := range pend {
-			if p.due <= day {
-				dueIdx = append(dueIdx, i)
-			}
-		}
-		sort.Slice(dueIdx, func(a, b int) bool {
-			pa, pb := pend[dueIdx[a]], pend[dueIdx[b]]
-			if pa.due != pb.due {
-				return pa.due < pb.due
-			}
-			return pa.stage < pb.stage
-		})
-
-		perLib := map[string]int{}
-		reviewMinutes := 0
 		taken := make([]bool, len(pend))
-		for _, i := range dueIdx {
-			p := pend[i]
-			cfg := libs[p.lib]
-			if cfg.ReviewCap > 0 && perLib[p.lib] >= cfg.ReviewCap {
-				continue // 今天该库的复习额度用完，留到明天
-			}
-			perLib[p.lib]++
-			cost := int(float64(cfg.MinutesPerItem)*factorFor(p.stage) + 0.5)
-			if cost < 1 {
-				cost = 1
-			}
-			reviewMinutes += cost
-			taken[i] = true
-			dp.Review[p.lib]++
+		newByLib := map[string]int{}
+		reviewByLib := map[string]int{}
+
+		var reviewMinutes int
+		if len(in.Windows) == 0 {
+			// 简单模式：一天一个总预算，先还复习债再学新内容。
+			reviewMinutes = simPlain(day, in, libs, order, remaining, pend, taken, intervals,
+				newByLib, reviewByLib)
+		} else {
+			// 时间窗模式：每个窗独立列预算，复习和学新都在窗内结算。
+			reviewMinutes = simWindows(day, in, libs, order, remaining, pend, taken, intervals,
+				newByLib, reviewByLib)
 		}
 
-		// ---- 2. 剩下的时间学新内容 ----
-		newBudget := in.DailyMinutes - reviewMinutes
-		if newBudget < 0 {
-			newBudget = 0
-			res.OverloadedDays++
-		}
-		alloc := allocate(newBudget, order, remaining, libs)
-		newMinutes := 0
-		for _, l := range order {
-			n := alloc[l]
-			if n <= 0 {
-				continue
-			}
-			dp.New[l] = n
-			newMinutes += n * libs[l].MinutesPerItem
-			remaining[l] -= n
-			res.Learned += n
-			// 新学内容进入复习队列
-			pend = append(pend, pending{lib: l, due: addDays(day, intervals[0]), stage: 0})
-		}
-
-		// ---- 3. 推进已复习内容的阶段 ----
+		// ---- 推进已复习内容的阶段 ----
 		kept := make([]pending, 0, len(pend))
 		for i, p := range pend {
-			if i < len(taken) && taken[i] {
+			if taken[i] {
 				stage := p.stage + 1
 				if stage >= len(intervals) {
 					continue // 毕业
@@ -275,6 +266,27 @@ func Simulate(in Input) Result {
 			kept = append(kept, p)
 		}
 		pend = kept
+
+		// ---- 把本日新学内容登记进复习队列 ----
+		newMinutes := 0
+		for _, l := range order {
+			n := newByLib[l]
+			if n <= 0 {
+				continue
+			}
+			dp.New[l] = n
+			remaining[l] -= n
+			res.Learned += n
+			newMinutes += n * libs[l].MinutesPerItem
+			for i := 0; i < n; i++ {
+				pend = append(pend, pending{lib: l, due: addDays(day, intervals[0]), stage: 0})
+			}
+		}
+		for lib, n := range reviewByLib {
+			if n > 0 {
+				dp.Review[lib] = n
+			}
+		}
 
 		dp.NewMinutes = newMinutes
 		dp.ReviewMinutes = reviewMinutes
@@ -300,6 +312,185 @@ func Simulate(in Input) Result {
 	res.Feasible = allDone(remaining)
 	return res
 }
+
+// reviewCost 返回复习一条内容要多少分钟。
+func reviewCost(lib LibInput, stage int) int {
+	c := int(float64(lib.MinutesPerItem)*factorFor(stage) + 0.5)
+	if c < 1 {
+		c = 1
+	}
+	return c
+}
+
+// dueIdxOf 返回今天该复习的下标，按「逾期最久 → 阶段最低」排序。
+func dueIdxOf(pend []pending, day string) []int {
+	idx := make([]int, 0, len(pend))
+	for i, p := range pend {
+		if p.due <= day {
+			idx = append(idx, i)
+		}
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		pa, pb := pend[idx[a]], pend[idx[b]]
+		if pa.due != pb.due {
+			return pa.due < pb.due
+		}
+		return pa.stage < pb.stage
+	})
+	return idx
+}
+
+// simPlain 是「一天一个总预算」的简单模式。返回复习花掉的分钟数。
+//
+// 复习优先于学新：到期没复习的内容会遗忘，而少学一条只是进度慢一点。
+// 所以这里**不**用预算去截断复习量 —— 复习量超过当天预算时宁可让新学归零，
+// 也不能把复习往后推（推一天就要多复习一堆，积压会滚雪球）。
+// 超支会记进 OverloadedDays，由 Recommend 给出「加时间或延期」的建议。
+func simPlain(day string, in Input, libs map[string]LibInput, order []string,
+	remaining map[string]int, pend []pending, taken []bool, intervals []int,
+	newByLib, reviewByLib map[string]int) int {
+
+	perLib := map[string]int{}
+	reviewMinutes := 0
+	for _, i := range dueIdxOf(pend, day) {
+		p := pend[i]
+		cfg := libs[p.lib]
+		if cfg.ReviewCap > 0 && perLib[p.lib] >= cfg.ReviewCap {
+			continue
+		}
+		perLib[p.lib]++
+		reviewMinutes += reviewCost(cfg, p.stage)
+		taken[i] = true
+		reviewByLib[p.lib]++
+	}
+
+	budget := in.DailyMinutes - reviewMinutes
+	if budget < 0 {
+		budget = 0
+	}
+	for lib, n := range allocate(budget, order, remaining, libs) {
+		newByLib[lib] = n
+	}
+	return reviewMinutes
+}
+
+// simWindows 是「上午学算法 / 下午复习+八股」这类分时间窗模式。
+//
+// 每个窗有独立的分钟预算，而且复习也受窗约束：算法的复习和学新算法一样费脑子，
+// 必须排在上午；八股的复习和八股的新内容都在下午。
+// 这一点不建模就会算出做不到的计划 —— 用户下午根本啃不动算法。
+func simWindows(day string, in Input, libs map[string]LibInput, order []string,
+	remaining map[string]int, pend []pending, taken []bool, intervals []int,
+	newByLib, reviewByLib map[string]int) int {
+
+	due := dueIdxOf(pend, day)
+	totalReview := 0
+
+	for _, w := range in.Windows {
+		if w.Minutes <= 0 {
+			continue
+		}
+		allowed := w.allowedSet()
+		libFits := func(lib string) bool {
+			return allowed == nil || allowed[lib]
+		}
+
+		// ---- 1. 本窗先还复习债 ----
+		// 同 simPlain：复习不受预算截断，宁可当天不学新内容。
+		used := 0
+		perLib := map[string]int{}
+		for _, i := range due {
+			if taken[i] {
+				continue
+			}
+			p := pend[i]
+			if !libFits(p.lib) {
+				continue
+			}
+			cfg := libs[p.lib]
+			if cfg.ReviewCap > 0 && perLib[p.lib] >= cfg.ReviewCap {
+				continue
+			}
+			used += reviewCost(cfg, p.stage)
+			perLib[p.lib]++
+			taken[i] = true
+			reviewByLib[p.lib]++
+		}
+		totalReview += used
+
+		// ---- 2. 本窗再学新内容 ----
+		if w.ReviewOnly {
+			continue
+		}
+		budget := w.Minutes - used
+		if budget <= 0 {
+			continue
+		}
+		// 只给「允许在这个窗学新内容」的库分配额度。
+		//
+		// eligible 必须扣掉「今天已经在别的窗分配过的量」，否则同一库会被
+		// 多个窗重复分配，最后写回去的总数超过剩余量。
+		eligible := map[string]int{}
+		subOrder := make([]string, 0, len(order))
+		for _, l := range order {
+			left := remaining[l] - newByLib[l]
+			if left <= 0 {
+				continue
+			}
+			if !windowAllowsNew(libs[l], w) {
+				continue
+			}
+			eligible[l] = left
+			subOrder = append(subOrder, l)
+		}
+		for lib, n := range allocate(budget, subOrder, eligible, libs) {
+			if n <= 0 {
+				continue
+			}
+			// 累加而不是覆盖：算法可以上午学，八股下午学，
+			// 两个窗的产物必须相加。直接赋值会让后一个窗把前一个窗抹掉 ——
+			// 现象是「上午的算法永远学不到」，非常隐蔽。
+			newByLib[lib] += n
+		}
+	}
+	return totalReview
+}
+
+// allowedSet 返回该窗允许的库集合；nil 表示不限。
+func (w Window) allowedSet() map[string]bool {
+	if len(w.Libs) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(w.Libs))
+	for _, l := range w.Libs {
+		m[l] = true
+	}
+	return m
+}
+
+// windowAllowsNew 判断某库能否在这个窗里学新内容。
+//
+// 两道闸门都要过：
+//  1. 库自己声明了专属窗口（OnlyWindow）时，只能在该窗学 —— 算法必须上午啃；
+//  2. 窗显式列了 Libs 时，只能学列出的库 —— 上午窗就只留给了算法，
+//     不能再塞进八股，否则上午的额度会被八股悄悄吃掉。
+func windowAllowsNew(lib LibInput, w Window) bool {
+	if lib.OnlyWindow != "" && lib.OnlyWindow != w.Name {
+		return false
+	}
+	if len(w.Libs) > 0 {
+		for _, l := range w.Libs {
+			if l == lib.Library {
+				return true
+			}
+		}
+		// 窗限定了库列表，但没包含这个库 → 不允许学
+		return false
+	}
+	return !w.ReviewOnly
+}
+
+// allocate 把新学预算按「剩余工作量」分给各库。
 
 // allDone 判断是否已学完。
 //
