@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/api/client'
-import type { Doc, DocMeta, Library, Manifest, Note, Progress, Snapshot, Status } from '@/types'
+import type { Doc, DocMeta, Goal, Library, Manifest, Note, Progress, Snapshot, Status } from '@/types'
 
 /** 内容库（manifest + 已加载文档缓存），只读。 */
 export const useContentStore = defineStore('content', () => {
@@ -86,10 +86,11 @@ export const useContentStore = defineStore('content', () => {
   }
 })
 
-/** 学习状态：进度 + 笔记 + 连续打卡。 */
+/** 学习状态：进度 + 笔记 + 学习任务 + 连续打卡。 */
 export const useStudyStore = defineStore('study', () => {
   const progress = ref<Record<string, Progress>>({})
   const notes = ref<Note[]>([])
+  const goal = ref<Goal | null>(null)
   const loaded = ref(false)
   const syncing = ref(false)
   const lastSyncAt = ref<string>('')
@@ -218,6 +219,7 @@ export const useStudyStore = defineStore('study', () => {
     for (const p of snap.progress) map[key(p.docId, p.itemId)] = p
     progress.value = map
     notes.value = snap.notes
+    goal.value = snap.goal ?? null
   }
 
   async function refresh() {
@@ -307,13 +309,33 @@ export const useStudyStore = defineStore('study', () => {
     notes.value = notes.value.filter((n) => n.id !== id)
   }
 
+  // ---------- 学习任务 ----------
+
+  async function saveGoal(input: {
+    docSlugs: string[]
+    dueDay: string
+    dailyTarget: number
+  }) {
+    const saved = await api.put<Goal>('/api/goal', input)
+    goal.value = saved
+    return saved
+  }
+
+  async function clearGoal() {
+    await api.del('/api/goal')
+    goal.value = null
+  }
+
   return {
     progress,
     notes,
+    goal,
     loaded,
     syncing,
     lastSyncAt,
     syncError,
+    saveGoal,
+    clearGoal,
     allStats,
     noteCountByDoc,
     noteGroups,

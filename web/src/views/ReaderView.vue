@@ -113,25 +113,28 @@ function resolveHashItemId(): string {
 }
 
 /**
- * 处理「从加星 / 笔记 / 站内链接跳到某一条」。
+ * 处理「进入文档」时的定位。
  *
- * 统一落到学习模式：一次只显示一条，天然就是把目标摆在眼前，
- * 不会再出现「滚动到了但内容被筛选掉 / 长篇列表里找不到」的情况。
+ * - URL 带 hash：跳到指定条目（来自加星 / 笔记 / 站内链接）。
+ * - URL 不带 hash：跳到**第一个没学完的条目**，也就是接着上次的进度继续，
+ *   而不是永远从第 1 条开始。
  */
 async function applyHash() {
   const raw = route.hash.replace(/^#/, '')
-  if (!raw) {
-    window.scrollTo({ top: 0 })
-    return
-  }
-  const itemId = resolveHashItemId()
+  const itemId = raw ? resolveHashItemId() : resumeItemId()
   const idx = itemId ? allRows.value.findIndex((r) => r.item.id === itemId) : -1
-  if (idx < 0) {
+
+  if (raw && idx < 0) {
     // 内容更新后旧笔记/加星可能指向已不存在的条目。不要静默停在第 1 条，
     // 明确告诉用户，并把地址里的 hash 清掉以免反复触发。
     window.scrollTo({ top: 0 })
     showToast('这条内容在当前版本里已不存在')
     void router.replace({ name: 'reader', params: { slug: slug.value } })
+    return
+  }
+
+  if (idx < 0) {
+    window.scrollTo({ top: 0 })
     return
   }
 
@@ -143,6 +146,20 @@ async function applyHash() {
 
   await nextTick()
   window.scrollTo({ top: 0, behavior: 'auto' })
+}
+
+/**
+ * 「接着学」的位置：第一个未掌握的条目。
+ *
+ * 全都学完时退回最后一条（让用户看到自己学完的结果，而不是又跳回第 1 条）。
+ * 全都没开始时返回第一条。
+ */
+function resumeItemId(): string {
+  if (!doc.value || !allRows.value.length) return ''
+  const docSlug = doc.value.slug
+  const firstUndone = allRows.value.find((r) => study.statusOf(docSlug, r.item.id) !== 2)
+  if (firstUndone) return firstUndone.item.id
+  return allRows.value[allRows.value.length - 1].item.id
 }
 
 // ---------- 题目列表 ----------
@@ -278,13 +295,34 @@ async function clearStatus(item: Item) {
   showToast('已清除状态')
 }
 
+/**
+ * 学习模式下切换条目。
+ *
+ * 每次切换都要把页面滚回顶部 —— 否则在长文里点了「已掌握，下一题」后，
+ * 新卡片仍停在上一篇的滚动位置，用户看到的是文章中间，以为没跳。
+ */
 function goNext() {
-  if (cursor.value < allRows.value.length - 1) cursor.value++
-  else showToast('已经是最后一题了 🎉')
+  if (cursor.value < allRows.value.length - 1) {
+    cursor.value++
+    scrollToTop()
+  } else {
+    showToast(`已经是最后一${unit.value}了 🎉`)
+  }
 }
 
 function goPrev() {
-  if (cursor.value > 0) cursor.value--
+  if (cursor.value > 0) {
+    cursor.value--
+    scrollToTop()
+  }
+}
+
+/** 切换条目后回到顶部（等 DOM 更新完再滚，避免被旧内容高度影响）。 */
+function scrollToTop() {
+  void nextTick().then(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' })
+    focusedId.value = currentRow.value?.item.id ?? ''
+  })
 }
 
 async function toggleStar(item: Item) {

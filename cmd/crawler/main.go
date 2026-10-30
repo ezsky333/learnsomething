@@ -38,30 +38,41 @@ import (
 )
 
 type docSpec struct {
-	Slug  string
-	Group string
-	Order int
-	Title string // 兜底标题
+	Slug   string
+	Group  string
+	Order  int
+	Title  string // 兜底标题
+	// ReadingList 标记「文章目录页」：条目是指向站外文章的链接，正文极短。
+	// 这类文档保留可读可标记，但不计入学习任务的理论进度。
+	ReadingList bool
 }
 
 // 学习顺序按索引页的分篇来排。
 var specs = []docSpec{
-	{"java", "01 Java 面试篇", 1, "Java 基础面试题"},
-	{"collections", "01 Java 面试篇", 2, "Java 集合面试题"},
-	{"juc", "01 Java 面试篇", 3, "Java 并发编程面试题"},
-	{"jvm", "01 Java 面试篇", 4, "Java 虚拟机面试题"},
-	{"spring", "01 Java 面试篇", 5, "Spring 面试题"},
-	{"mysql", "05 数据库面试篇", 6, "MySQL 面试题"},
-	{"redis", "05 数据库面试篇", 7, "Redis 面试题"},
-	{"os", "06 计算机基础面试篇", 8, "操作系统面试题"},
-	{"network", "06 计算机基础面试篇", 9, "计算机网络面试题"},
-	{"data", "06 计算机基础面试篇", 10, "数据结构与算法面试题"},
-	{"mq", "07 架构设计面试篇", 11, "消息队列面试题"},
-	{"cap", "07 架构设计面试篇", 12, "分布式面试题"},
-	{"systemdesign", "07 架构设计面试篇", 13, "系统设计面试题"},
-	{"linux", "08 工具命令面试篇", 14, "Linux 命令面试题"},
-	{"git", "08 工具命令面试篇", 15, "Git 面试题"},
-	{"docker", "08 工具命令面试篇", 16, "Docker 面试题"},
+	{"java", "01 Java 面试篇", 1, "Java 基础面试题", false},
+	{"collections", "01 Java 面试篇", 2, "Java 集合面试题", false},
+	{"juc", "01 Java 面试篇", 3, "Java 并发编程面试题", false},
+	{"jvm", "01 Java 面试篇", 4, "Java 虚拟机面试题", false},
+	{"spring", "01 Java 面试篇", 5, "Spring 面试题", false},
+	{"cpp", "02 C++ 面试篇", 6, "C++ 面试题", false},
+	{"golang", "03 Golang 面试篇", 7, "Golang 面试题", false},
+	{"python", "04 Python 面试篇", 8, "Python 面试题", false},
+	{"mysql", "05 数据库面试篇", 9, "MySQL 面试题", false},
+	{"redis", "05 数据库面试篇", 10, "Redis 面试题", false},
+	{"os", "06 计算机基础面试篇", 11, "操作系统面试题", false},
+	{"network", "06 计算机基础面试篇", 12, "计算机网络面试题", false},
+	{"data", "06 计算机基础面试篇", 13, "数据结构与算法面试题", false},
+	{"mq", "07 架构设计面试篇", 14, "消息队列面试题", false},
+	{"cap", "07 架构设计面试篇", 15, "分布式面试题", false},
+	{"systemdesign", "07 架构设计面试篇", 16, "系统设计面试题", false},
+	{"linux", "08 工具命令面试篇", 17, "Linux 命令面试题", false},
+	{"git", "08 工具命令面试篇", 18, "Git 面试题", false},
+	{"docker", "08 工具命令面试篇", 19, "Docker 面试题", false},
+	{"business_testing", "09 测试开发面试篇", 20, "业务测试面试题", false},
+	{"python_automation", "09 测试开发面试篇", 21, "Python 自动化测试面试题", false},
+	{"java_automation", "09 测试开发面试篇", 22, "Java 自动化测试面试题", false},
+	{"performance_testing", "09 测试开发面试篇", 23, "性能测试面试题", false},
+	{"win", "10 后端进阶面试篇", 24, "后端技术进阶之路", true},
 }
 
 const baseURL = "https://xiaolincoding.com/interview/"
@@ -84,9 +95,15 @@ func main() {
 
 	client := &http.Client{Timeout: 60 * time.Second}
 
-	manifest := model.Manifest{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+	// 关键：在旧的 manifest 上做增量覆盖，而不是从零重建。
+	// 否则跑一次八股爬虫就会把 algocrawler 写的 14 篇算法文档全部挤掉。
+	manifest := loadManifest(filepath.Join(*outDir, "manifest.json"))
 	var imgJobs []imgJob
 	var imgMu sync.Mutex
+
+	// rebuilt 记录本次真正重抓的 slug；只有它们会被替换，其余原样保留。
+	rebuilt := map[string]bool{}
+	var freshMetas []model.DocMeta
 
 	for _, spec := range specs {
 		if *only != "" && !strings.Contains(","+*only+",", ","+spec.Slug+",") {
@@ -108,10 +125,31 @@ func main() {
 		if err := os.WriteFile(target, data, 0o644); err != nil {
 			fatal(err)
 		}
-		manifest.Docs = append(manifest.Docs, doc.DocMeta)
-		fmt.Printf("%-13s sections=%-3d questions=%-4d chars=%-7d json=%dKB\n",
+		rebuilt[spec.Slug] = true
+		freshMetas = append(freshMetas, doc.DocMeta)
+		fmt.Printf("%-20s sections=%-3d questions=%-4d chars=%-7d json=%dKB\n",
 			spec.Slug, doc.SectionCount, doc.QuestionCount, doc.CharCount, len(data)/1024)
 	}
+
+	// 合并：保留未被重抓的文档（含 algocrawler 写的算法专题），再追加本次结果。
+	merged := make([]model.DocMeta, 0, len(manifest.Docs)+len(freshMetas))
+	seen := map[string]bool{}
+	for _, d := range manifest.Docs {
+		if rebuilt[d.Slug] || seen[d.Slug] {
+			continue
+		}
+		seen[d.Slug] = true
+		merged = append(merged, d)
+	}
+	for _, d := range freshMetas {
+		if seen[d.Slug] {
+			continue
+		}
+		seen[d.Slug] = true
+		merged = append(merged, d)
+	}
+	manifest.Docs = merged
+	manifest.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -120,9 +158,23 @@ func main() {
 	if err := os.WriteFile(filepath.Join(*outDir, "manifest.json"), data, 0o644); err != nil {
 		fatal(err)
 	}
-	fmt.Printf("manifest: %d docs\n", len(manifest.Docs))
+	fmt.Printf("manifest: %d docs (%d rebuilt)\n", len(manifest.Docs), len(rebuilt))
 
 	downloadImages(client, imgJobs, *rawDir)
+}
+
+// loadManifest 读取已有 manifest；不存在或损坏时返回空清单，保证首次抓取可用。
+func loadManifest(path string) model.Manifest {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return model.Manifest{}
+	}
+	var m model.Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN 旧 manifest 解析失败，将重建: %v\n", err)
+		return model.Manifest{}
+	}
+	return m
 }
 
 type imgJob struct {
@@ -359,6 +411,7 @@ func crawlDoc(client *http.Client, spec docSpec, rawDir string) (model.Doc, []im
 			QuestionCount: docs,
 			CharCount:     totalChars,
 			Library:       "interview",
+			ReadingList:   spec.ReadingList,
 		},
 		Intro:    strings.TrimSpace(introBuf.String()),
 		Sections: sections,

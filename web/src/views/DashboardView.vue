@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
+import GoalPanel from '@/components/GoalPanel.vue'
 import Heatmap from '@/components/Heatmap.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import ProgressRing from '@/components/ProgressRing.vue'
@@ -215,6 +216,11 @@ const motivation = computed(() => {
         </div>
         <Heatmap :counts="study.heatmap" />
       </div>
+    </section>
+
+    <!-- 学习任务：今日应有进度 / 超前落后 -->
+    <section class="mt-4">
+      <GoalPanel />
     </section>
 
     <section v-for="group in grouped" :key="group.title" class="mt-8">

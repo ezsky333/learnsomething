@@ -38,6 +38,10 @@ jobs:
         working-directory: web
         run: pnpm build
 
+      - name: 前端单元测试
+        working-directory: web
+        run: node --experimental-strip-types --test src/utils/goal.test.ts
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'

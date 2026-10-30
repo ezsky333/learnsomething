@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -39,10 +40,27 @@ type Note struct {
 	CreatedDy string `json:"createdDay"`
 }
 
+// Goal 是学习任务：选中的模块 + 截止日期。
+//
+// 只维护一个当前目标（单用户场景，简单可靠）。「每天该学多少」由前端
+// 用「选中模块的总条数 / 剩余天数」推导，不落库，避免和实际进度不同步。
+type Goal struct {
+	// DocSlugs 是勾选要学的模块（一个 doc = 一个模块，算法专题也算模块）。
+	DocSlugs []string `json:"docSlugs"`
+	// StartDay / DueDay 都是本地日期 YYYY-MM-DD。
+	StartDay string `json:"startDay"`
+	DueDay   string `json:"dueDay"`
+	// DailyTarget 是用户自定的每日目标；0 表示按剩余天数自动均摊。
+	DailyTarget int    `json:"dailyTarget"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
+}
+
 // Snapshot 是一次全量同步的载荷。
 type Snapshot struct {
 	Progress []Progress `json:"progress"`
 	Notes    []Note     `json:"notes"`
+	Goal     *Goal      `json:"goal"`
 	Revision string     `json:"revision"`
 }
 
@@ -124,6 +142,12 @@ func (s *Store) SetMeta(key, value string) error {
 // Snapshot 读出全部进度与笔记。
 func (s *Store) Snapshot() (Snapshot, error) {
 	snap := Snapshot{Progress: []Progress{}, Notes: []Note{}}
+
+	goal, err := s.GetGoal()
+	if err != nil {
+		return snap, err
+	}
+	snap.Goal = goal
 
 	rows, err := s.db.Query(`SELECT doc_id, item_id, status, starred, updated_at, done_day
 		FROM progress ORDER BY doc_id, item_id`)
@@ -253,6 +277,66 @@ func (s *Store) DeleteNote(id int64) error {
 
 // ErrNotFound 表示记录不存在。
 var ErrNotFound = errors.New("记录不存在")
+
+// goalKey 是 goal 在 meta 表里的键。学习任务是一份 JSON，直接存 meta 即可。
+const goalKey = "goal"
+
+// GetGoal 读取当前学习任务；没有设置过时返回 nil。
+func (s *Store) GetGoal() (*Goal, error) {
+	raw, err := s.Meta(goalKey)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var g Goal
+	if err := json.Unmarshal([]byte(raw), &g); err != nil {
+		// 数据损坏时当作没有目标，不让整个快照接口失败。
+		return nil, nil
+	}
+	return &g, nil
+}
+
+// SetGoal 保存学习任务。
+func (s *Store) SetGoal(g Goal) (*Goal, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	prev, _ := s.GetGoal()
+	if prev != nil {
+		g.CreatedAt = prev.CreatedAt
+	}
+	if g.CreatedAt == "" {
+		g.CreatedAt = now
+	}
+	g.UpdatedAt = now
+
+	// 去重并保持顺序，避免前端重复提交同一模块。
+	seen := make(map[string]bool, len(g.DocSlugs))
+	dedup := make([]string, 0, len(g.DocSlugs))
+	for _, slug := range g.DocSlugs {
+		if slug == "" || seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		dedup = append(dedup, slug)
+	}
+	g.DocSlugs = dedup
+
+	raw, err := json.Marshal(g)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.SetMeta(goalKey, string(raw)); err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+// ClearGoal 删除学习任务。
+func (s *Store) ClearGoal() error {
+	_, err := s.db.Exec(`DELETE FROM meta WHERE key = ?`, goalKey)
+	return err
+}
 
 func boolToInt(b bool) int {
 	if b {

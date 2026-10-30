@@ -12,6 +12,8 @@ export interface DocMeta {
   charCount: number
   /** interview = 小林coding 八股题；algo = 代码随想录算法教程 */
   library: Library
+  /** 只是一份指向站外文章的目录，不计入学习任务的理论进度 */
+  readingList?: boolean
 }
 
 export type Library = 'interview' | 'algo'
@@ -63,8 +65,20 @@ export interface Note {
   createdDay: string
 }
 
+/** 学习任务：选中的模块 + 截止日期。 */
+export interface Goal {
+  docSlugs: string[]
+  startDay: string
+  dueDay: string
+  /** 0 表示按剩余天数自动均摊 */
+  dailyTarget: number
+  createdAt: string
+  updatedAt: string
+}
+
 export interface Snapshot {
   progress: Progress[]
   notes: Note[]
+  goal: Goal | null
   revision: string
 }

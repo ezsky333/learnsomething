@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,6 +70,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes", s.auth(s.handleCreateNote))
 	mux.HandleFunc("PUT /api/notes/{id}", s.auth(s.handleUpdateNote))
 	mux.HandleFunc("DELETE /api/notes/{id}", s.auth(s.handleDeleteNote))
+
+	// 学习任务
+	mux.HandleFunc("PUT /api/goal", s.auth(s.handlePutGoal))
+	mux.HandleFunc("DELETE /api/goal", s.auth(s.handleDeleteGoal))
 
 	// 内容
 	mux.HandleFunc("GET /api/content/manifest", s.handleManifest)
@@ -357,6 +362,68 @@ func (s *Server) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) bumpRevision() {
 	_ = s.store.SetMeta("revision", strconv.FormatInt(time.Now().UnixNano(), 36))
+}
+
+// ---------- 学习任务 ----------
+
+type goalReq struct {
+	DocSlugs    []string `json:"docSlugs"`
+	DueDay      string   `json:"dueDay"`
+	DailyTarget int      `json:"dailyTarget"`
+}
+
+var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+func (s *Server) handlePutGoal(w http.ResponseWriter, r *http.Request) {
+	var req goalReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求格式不正确")
+		return
+	}
+	if len(req.DocSlugs) == 0 {
+		writeErr(w, http.StatusBadRequest, "至少要选择一个模块")
+		return
+	}
+	if !dayRe.MatchString(req.DueDay) {
+		writeErr(w, http.StatusBadRequest, "截止日期格式应为 YYYY-MM-DD")
+		return
+	}
+	// 截止日期必须在今天或之后，否则「剩余天数」会变成负数。
+	if _, err := time.ParseInLocation("2006-01-02", req.DueDay, time.Local); err != nil {
+		writeErr(w, http.StatusBadRequest, "截止日期不是有效日期")
+		return
+	}
+	today := time.Now().Format("2006-01-02")
+	if req.DueDay < today {
+		writeErr(w, http.StatusBadRequest, "截止日期不能早于今天")
+		return
+	}
+	if req.DailyTarget < 0 {
+		writeErr(w, http.StatusBadRequest, "每日目标不能为负数")
+		return
+	}
+
+	goal, err := s.store.SetGoal(store.Goal{
+		DocSlugs:    req.DocSlugs,
+		StartDay:    today,
+		DueDay:      req.DueDay,
+		DailyTarget: req.DailyTarget,
+	})
+	if err != nil {
+		s.fail(w, "保存学习任务", err)
+		return
+	}
+	s.bumpRevision()
+	writeJSON(w, http.StatusOK, goal)
+}
+
+func (s *Server) handleDeleteGoal(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.ClearGoal(); err != nil {
+		s.fail(w, "删除学习任务", err)
+		return
+	}
+	s.bumpRevision()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------- 内容接口 ----------

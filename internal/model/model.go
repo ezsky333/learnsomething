@@ -30,6 +30,9 @@ type DocMeta struct {
 	CharCount     int    `json:"charCount"`
 	// Library 区分内容来源：interview（小林coding 八股）或 algo（代码随想录算法）。
 	Library string `json:"library"`
+	// ReadingList 表示这是一份「文章目录 / 阅读清单」而非完整题库：
+	// 条目只是指向站外文章的链接、正文极短，不应计入学习任务的理论进度。
+	ReadingList bool `json:"readingList,omitempty"`
 }
 
 // Doc 是整篇学习文档。
