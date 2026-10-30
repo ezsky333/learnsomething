@@ -19,6 +19,7 @@ export const useContentStore = defineStore('content', () => {
 
   const interviewDocs = computed(() => byLibrary('interview'))
   const algoDocs = computed(() => byLibrary('algo'))
+  const aiDocs = computed(() => byLibrary('ai'))
 
   const totalQuestions = computed(() =>
     docMetas.value.reduce((sum, d) => sum + d.questionCount, 0),
@@ -29,6 +30,7 @@ export const useContentStore = defineStore('content', () => {
   const groups = computed(() => groupBy(docMetas.value))
   const interviewGroups = computed(() => groupBy(interviewDocs.value))
   const algoGroups = computed(() => groupBy(algoDocs.value))
+  const aiGroups = computed(() => groupBy(aiDocs.value))
 
   function groupBy(list: DocMeta[]) {
     const map = new Map<string, DocMeta[]>()
@@ -75,9 +77,11 @@ export const useContentStore = defineStore('content', () => {
     docMetas,
     interviewDocs,
     algoDocs,
+    aiDocs,
     groups,
     interviewGroups,
     algoGroups,
+    aiGroups,
     totalQuestions,
     totalChars,
     loadManifest,

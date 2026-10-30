@@ -32,8 +32,8 @@ foreach ($f in $files) {
     $ext = $f.Extension.ToLowerInvariant()
     $inSum += $f.Length
 
-    # gif 保留动画，原样拷贝。
-    if ($ext -eq '.gif') {
+    # gif 保留动画、svg 是矢量图，都原样拷贝（ffmpeg 转不了 svg）。
+    if (($ext -eq '.gif') -or ($ext -eq '.svg')) {
         $dest = Join-Path $OutDir $f.Name
         if (-not (Test-Path $dest)) { Copy-Item $f.FullName $dest }
         $outSum += (Get-Item $dest).Length

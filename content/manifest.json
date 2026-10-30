@@ -457,6 +457,78 @@
       "charCount": 2476,
       "library": "interview",
       "readingList": true
+    },
+    {
+      "slug": "ai-agent",
+      "title": "Agent 面试题",
+      "group": "大模型面试 · 小林面试笔记",
+      "order": 1,
+      "sourceUrl": "https://xiaolinnote.com/ai/agent/",
+      "sourceUpdated": "最近更新2026/10/12 17:22",
+      "sectionCount": 1,
+      "questionCount": 30,
+      "charCount": 171444,
+      "library": "ai"
+    },
+    {
+      "slug": "ai-rag",
+      "title": "RAG 面试题",
+      "group": "大模型面试 · 小林面试笔记",
+      "order": 2,
+      "sourceUrl": "https://xiaolinnote.com/ai/rag/",
+      "sourceUpdated": "最近更新2026/10/12 17:22",
+      "sectionCount": 1,
+      "questionCount": 23,
+      "charCount": 92796,
+      "library": "ai"
+    },
+    {
+      "slug": "ai-tools",
+      "title": "LLM 工具调用面试题",
+      "group": "大模型面试 · 小林面试笔记",
+      "order": 3,
+      "sourceUrl": "https://xiaolinnote.com/ai/tools/",
+      "sourceUpdated": "最近更新2026/10/12 17:22",
+      "sectionCount": 1,
+      "questionCount": 22,
+      "charCount": 109678,
+      "library": "ai"
+    },
+    {
+      "slug": "ai-llm",
+      "title": "大模型工程面试题",
+      "group": "大模型面试 · 小林面试笔记",
+      "order": 4,
+      "sourceUrl": "https://xiaolinnote.com/ai/llm/",
+      "sourceUpdated": "最近更新2026/10/12 17:22",
+      "sectionCount": 1,
+      "questionCount": 23,
+      "charCount": 137176,
+      "library": "ai"
+    },
+    {
+      "slug": "ai-langchain",
+      "title": "LangChain 框架面试题",
+      "group": "大模型面试 · 小林面试笔记",
+      "order": 5,
+      "sourceUrl": "https://xiaolinnote.com/ai/langchain/",
+      "sourceUpdated": "最近更新2026/10/12 17:22",
+      "sectionCount": 1,
+      "questionCount": 12,
+      "charCount": 73118,
+      "library": "ai"
+    },
+    {
+      "slug": "ai-coding",
+      "title": "AI 编程面试题",
+      "group": "大模型面试 · 小林面试笔记",
+      "order": 6,
+      "sourceUrl": "https://xiaolinnote.com/ai/coding/",
+      "sourceUpdated": "最近更新2026/10/13 10:46",
+      "sectionCount": 1,
+      "questionCount": 14,
+      "charCount": 78731,
+      "library": "ai"
     }
   ]
 }

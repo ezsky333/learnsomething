@@ -10,13 +10,14 @@ export interface DocMeta {
   sectionCount: number
   questionCount: number
   charCount: number
-  /** interview = 小林coding 八股题；algo = 代码随想录算法教程 */
+  /** interview = 小林coding 八股题；algo = 代码随想录算法教程；ai = 小林面试笔记大模型题库
+   */
   library: Library
   /** 只是一份指向站外文章的目录，不计入学习任务的理论进度 */
   readingList?: boolean
 }
 
-export type Library = 'interview' | 'algo'
+export type Library = 'interview' | 'algo' | 'ai'
 
 export interface Manifest {
   generatedAt: string

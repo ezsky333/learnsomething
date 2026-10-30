@@ -15,20 +15,21 @@ const route = useRoute()
 const router = useRouter()
 
 const LIB_KEY = 'ls-library'
+const LIBRARIES: Library[] = ['interview', 'algo', 'ai']
 const library = ref<Library>(readLibrary())
 
 function readLibrary(): Library {
   const q = route.query.lib
-  if (q === 'algo' || q === 'interview') return q
+  if (q === 'algo' || q === 'interview' || q === 'ai') return q
   const saved = localStorage.getItem(LIB_KEY)
-  return saved === 'algo' ? 'algo' : 'interview'
+  return LIBRARIES.includes(saved as Library) ? (saved as Library) : 'interview'
 }
 
 watch(library, (v) => {
   localStorage.setItem(LIB_KEY, v)
   const query = { ...route.query }
-  if (v === 'algo') query.lib = 'algo'
-  else delete query.lib
+  if (v === 'interview') delete query.lib
+  else query.lib = v
   void router.replace({ query })
 })
 
@@ -37,13 +38,17 @@ onMounted(async () => {
   if (!study.loaded) await study.load()
 })
 
-const scopeDocs = computed(() =>
-  library.value === 'algo' ? content.algoDocs : content.interviewDocs,
-)
+const scopeDocs = computed(() => {
+  if (library.value === 'algo') return content.algoDocs
+  if (library.value === 'ai') return content.aiDocs
+  return content.interviewDocs
+})
 
-const scopeGroups = computed(() =>
-  library.value === 'algo' ? content.algoGroups : content.interviewGroups,
-)
+const scopeGroups = computed(() => {
+  if (library.value === 'algo') return content.algoGroups
+  if (library.value === 'ai') return content.aiGroups
+  return content.interviewGroups
+})
 
 interface DocRow extends DocMeta {
   done: number
@@ -95,7 +100,11 @@ const libraryStats = computed(() => {
     for (const d of docs) done += study.docStats(d.slug, d.questionCount).done
     return { total, done, percent: total ? Math.round((done / total) * 100) : 0 }
   }
-  return { interview: calc(content.interviewDocs), algo: calc(content.algoDocs) }
+  return {
+    interview: calc(content.interviewDocs),
+    algo: calc(content.algoDocs),
+    ai: calc(content.aiDocs),
+  }
 })
 
 const estimatedHours = computed(() => {
@@ -112,14 +121,19 @@ const nextUp = computed<DocRow | undefined>(() => {
 const motivation = computed(() => {
   const p = overall.value.percent
   const algo = library.value === 'algo'
-  if (p >= 100) return algo ? '算法全通了，去刷 Hot100 检验 🎯' : '全部拿下，接下来去刷真题吧 🎯'
+  const ai = library.value === 'ai'
+  if (p >= 100) {
+    if (algo) return '算法全通了，去刷 Hot100 检验 🎯'
+    if (ai) return '大模型题库全刷完了，去准备项目吧 🎯'
+    return '全部拿下，接下来去刷真题吧 🎯'
+  }
   if (p >= 85) return '只剩最后几块硬骨头，别停 💪'
   if (p >= 60) return '过半了，这个节奏很稳 🚀'
   if (p >= 30) return '已经把大头啃下来了，继续 ✊'
-  if (p > 0) return '开了个头最重要，今天再推一篇 🌱'
-  return algo
-    ? '建议从「数组」开始，一题一题把框架搭起来 🌤'
-    : '选一篇开始吧：Java 基础是最稳的起点 🌤'
+  if (p > 0) return algo ? '开了个头最重要，今天再推一篇 🌱' : '开了个头最重要，今天再推一题 🌱'
+  if (algo) return '建议从「数组」开始，一题一题把框架搭起来 🌤'
+  if (ai) return '建议从 Agent 第 1 题开始，先把概念讲清楚 🌤'
+  return '选一篇开始吧：Java 基础是最稳的起点 🌤'
 })
 </script>
 
@@ -134,6 +148,7 @@ const motivation = computed(() => {
           v-for="lib in [
             { k: 'interview', label: '面试八股', hint: '小林coding' },
             { k: 'algo', label: '算法教程', hint: '代码随想录' },
+            { k: 'ai', label: '大模型面试', hint: '小林面试笔记' },
           ]"
           :key="lib.k"
           class="group flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition-colors"
@@ -154,7 +169,13 @@ const motivation = computed(() => {
         </button>
       </div>
       <span class="text-[11px] text-fg-dim">
-        {{ library === 'algo' ? '一篇长文 = 一条学习内容，读完再标记' : '一道题 = 一条学习内容' }}
+        {{
+          library === 'algo'
+            ? '一篇长文 = 一条学习内容，读完再标记'
+            : library === 'ai'
+              ? '一道面试题 = 一条学习内容'
+              : '一道题 = 一条学习内容'
+        }}
       </span>
     </div>
 
@@ -243,6 +264,10 @@ const motivation = computed(() => {
                   {{ row.questionCount }} 篇 · 约
                   {{ Math.max(1, Math.round((row.charCount / 400) * 2.2 / 60)) }} 小时
                 </template>
+                <template v-else-if="row.library === 'ai'">
+                  {{ row.questionCount }} 题 · 约
+                  {{ Math.max(1, Math.round((row.charCount / 400) * 2.2 / 60)) }} 小时
+                </template>
                 <template v-else>
                   {{ row.sectionCount }} 章节 · {{ row.questionCount }} 题 · 约
                   {{ Math.max(1, Math.round((row.charCount / 400) * 2.2 / 60)) }} 小时
@@ -278,7 +303,13 @@ const motivation = computed(() => {
       v-if="!scopeDocs.length && !content.loading"
       class="py-20 text-center text-sm text-fg-dim"
     >
-      {{ library === 'algo' ? '算法内容为空，请先运行 go run ./cmd/algocrawler' : '内容为空，请先运行 go run ./cmd/crawler' }}
+      {{
+        library === 'algo'
+          ? '算法内容为空，请先运行 go run ./cmd/algocrawler'
+          : library === 'ai'
+            ? '大模型题库为空，请先运行 go run ./cmd/aicrawler'
+            : '内容为空，请先运行 go run ./cmd/crawler'
+      }}
     </p>
 
     <footer class="mt-14 border-t border-line pt-6 text-center text-[11px] leading-relaxed text-fg-dim">
@@ -291,6 +322,16 @@ const motivation = computed(() => {
           class="text-accent hover:underline"
         >programmercarl.com</a>
         ，版权归原作者「代码随想录」所有，仅供个人学习。
+      </template>
+      <template v-else-if="library === 'ai'">
+        内容抓取自
+        <a
+          href="https://xiaolinnote.com/ai/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-accent hover:underline"
+        >xiaolinnote.com</a>
+        ，版权归原作者「小林面试笔记」所有，仅供个人学习。
       </template>
       <template v-else>
         内容抓取自

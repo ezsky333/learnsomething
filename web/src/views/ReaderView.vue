@@ -726,7 +726,10 @@ const nextRow = computed(() => allRows.value[cursor.value + 1] ?? null)
             <div class="flex flex-wrap items-center gap-2 text-[11px] text-fg-dim">
               <span class="chip bg-accent-soft text-accent">{{ doc.group }}</span>
               <span v-if="isAlgo">{{ doc.questionCount }} 篇 · 按顺序学</span>
-              <span v-else>{{ doc.sectionCount }} 章节 · {{ doc.questionCount }} 题</span>
+              <span v-else-if="doc.sectionCount > 1">
+                {{ doc.sectionCount }} 章节 · {{ doc.questionCount }} 题
+              </span>
+              <span v-else>{{ doc.questionCount }} 题</span>
               <span v-if="doc.sourceUpdated">· 原文更新 {{ doc.sourceUpdated }}</span>
             </div>
             <h1 class="mt-2 text-2xl font-semibold text-fg">{{ doc.title }}</h1>

@@ -15,6 +15,7 @@ log-*.txt
 # 一次性抓取的原始素材（约 570MB，可由 scripts 重新生成）
 _raw/
 _raw2/
+_raw3/
 _rawimg/
 _tmp/
 _probe/
