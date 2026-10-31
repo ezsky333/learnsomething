@@ -4,7 +4,7 @@ import { useContentStore, useStudyStore } from '@/stores'
 import { computeGoalProgress, daysBetween, formatDay, paceOf, today } from '@/utils/goal'
 import type { ModuleProgress, PaceLevel } from '@/utils/goal'
 import { DEFAULT_MINUTES, LIBRARY_LABEL, WEEKDAYS } from '@/utils/plan'
-import type { DocMeta, PlanWindow } from '@/types'
+import type { DocMeta, PlanDay, PlanWindow } from '@/types'
 
 const content = useContentStore()
 const study = useStudyStore()
@@ -262,34 +262,68 @@ const progress = computed(() =>
 const pace = computed(() => paceOf(progress.value))
 
 /**
- * 今天该学多少，来自服务端的逐日排期。
+ * 今天的排期（服务端逐日推算，唯一权威）。
  *
- * 为什么不能自己用「时间 ÷ 单条成本」算：那是「时间全部用来学新的」的理论值，
- * 而实际每天要先还复习债。算法上午 100 分钟理论能学 4 条，
- * 但有复习的日子实际只学 1~2 条 —— 两块面板必须给同一个答案。
+ * 为什么必须有它：界面上曾经同时出现「每天应完成 9.3 条」「今天该学 22 条」
+ * 「每天约 2.0 条」三个数字，各自算法不同 —— 9.3 是「总条数 ÷ 总天数」，
+ * 把 25 分钟一条的算法和 5 分钟一条的八股混在一起平均，本身就没有意义。
+ * 用户看到自然不知道该信哪个。
+ *
+ * 现在的原则：有排期就用排期，所有「今天该多少」都从这一个来源推导。
  */
-const todayByLib = computed<Record<string, { newItems: number; reviewItems: number }>>(() => {
-  const out: Record<string, { newItems: number; reviewItems: number }> = {}
+const planToday = computed<PlanDay | null>(() => {
   const plan = study.studyPlan?.plan
-  if (!plan || !plan.days.length) return out
+  if (!plan || !plan.days.length) return null
   const todayStr = today()
-  const day = plan.days.find((d) => d.day === todayStr) ?? plan.days[0]
-  for (const [lib, n] of Object.entries(day.new ?? {})) {
-    out[lib] = out[lib] ?? { newItems: 0, reviewItems: 0 }
-    out[lib].newItems = n
-  }
-  for (const [lib, n] of Object.entries(day.review ?? {})) {
-    out[lib] = out[lib] ?? { newItems: 0, reviewItems: 0 }
-    out[lib].reviewItems = n
-  }
-  return out
+  return plan.days.find((d) => d.day === todayStr) ?? plan.days[0] ?? null
+})
+
+/** 今天该新学多少条（各库合计）。 */
+const planTodayNew = computed(() => {
+  if (!planToday.value) return 0
+  return Object.values(planToday.value.new ?? {}).reduce((a, b) => a + b, 0)
+})
+
+/** 今天该复习多少条。 */
+const planTodayReview = computed(() => {
+  if (!planToday.value) return 0
+  return Object.values(planToday.value.review ?? {}).reduce((a, b) => a + b, 0)
+})
+
+/** 有排期时用它，没有则退回线性估算。 */
+const hasPlan = computed(() => planToday.value !== null)
+
+/**
+ * 节奏结论。
+ *
+ * 排期模式下不再用「实际 − 线性应有」算超前落后（那个基准本身不成立），
+ * 改成「按当前节奏能不能在截止日前学完」，这才是能行动的信息。
+ */
+const planPaceText = computed(() => {
+  const data = study.studyPlan
+  if (!data?.plan || !data.advice || !study.goal) return ''
+  if (!data.advice.feasible) return '目标偏紧，学不完'
+  const finish = data.plan.finishDay
+  if (!finish) return '目标可行'
+  const early = daysBetween(finish, study.goal.dueDay)
+  if (early > 0) return `比截止日早 ${early} 天`
+  if (early === 0) return '正好卡在截止日'
+  return '目标可行'
+})
+
+/** 排期模式下的节奏颜色。 */
+const planPaceColor = computed(() => {
+  const data = study.studyPlan
+  if (!data?.advice) return 'text-fg-dim'
+  if (!data.advice.feasible) return 'text-amber-glow'
+  return 'text-mint-500 dark:text-mint-400'
 })
 
 onMounted(async () => {
   try {
     await study.refreshStudyPlan()
   } catch {
-    // 推算失败不影响任务面板的主要信息
+    // 推算失败时退回线性估算，不影响其余信息
   }
 })
 
@@ -388,70 +422,122 @@ function modulePaceText(m: ModuleProgress): string {
       <span v-if="study.goal" class="text-[11px] text-fg-dim">
         截止 {{ study.goal.dueDay }}
       </span>
-      <span v-if="study.goal" class="ml-auto text-[11px] font-medium" :class="paceColor">
-        {{ paceText }}
+      <span
+        v-if="study.goal"
+        class="ml-auto text-[11px] font-medium"
+        :class="hasPlan ? planPaceColor : paceColor"
+      >
+        {{ hasPlan ? planPaceText : paceText }}
       </span>
     </div>
 
-    <!-- 已设置任务：显示今日应有 / 差距 -->
+    <!-- 已设置任务：显示今日安排 / 差距 -->
     <template v-if="study.goal && !open">
-      <div class="flex items-end justify-between gap-3">
-        <div>
-          <p class="text-[11px] text-fg-dim">今日应有进度</p>
-          <p class="text-xl font-semibold text-fg tabular-nums">
-            {{ Math.ceil(progress.expectedDone) }}
-            <span class="text-xs font-normal text-fg-dim">/ {{ progress.totalItems }} 条累计</span>
-          </p>
+      <!-- 有逐日排期时：一切以排期为准（唯一权威） -->
+      <template v-if="hasPlan">
+        <div class="grid grid-cols-3 gap-2 text-center">
+          <div class="rounded-lg bg-panel-soft px-2 py-2">
+            <p class="text-[10px] text-fg-dim">今天新学</p>
+            <p class="mt-0.5 text-lg font-semibold tabular-nums text-accent">
+              {{ planTodayNew }}
+            </p>
+          </div>
+          <div class="rounded-lg bg-panel-soft px-2 py-2">
+            <p class="text-[10px] text-fg-dim">今天复习</p>
+            <p class="mt-0.5 text-lg font-semibold tabular-nums text-fg">{{ planTodayReview }}</p>
+          </div>
+          <div class="rounded-lg bg-panel-soft px-2 py-2">
+            <p class="text-[10px] text-fg-dim">今天用时</p>
+            <p class="mt-0.5 text-lg font-semibold tabular-nums text-fg">
+              {{ planToday?.minutesUsed ?? 0 }}
+              <span class="text-[10px] font-normal text-fg-dim">分钟</span>
+            </p>
+          </div>
         </div>
-        <div class="text-right">
-          <p class="text-[11px] text-fg-dim">实际完成</p>
-          <p class="text-xl font-semibold text-fg tabular-nums">
-            {{ progress.doneItems }}
-            <span class="text-xs font-normal text-fg-dim">条</span>
-          </p>
-        </div>
-      </div>
 
-      <!-- 双刻度进度条：实心=实际，刻度线=应有 -->
-      <div class="relative mt-3">
-        <div class="h-2 w-full overflow-hidden rounded-full bg-line">
+        <div class="mt-3 flex items-baseline justify-between text-[11px] text-fg-dim">
+          <span>
+            已完成 {{ progress.doneItems }} / {{ progress.totalItems }} 条
+            （{{ Math.round(progress.percent) }}%）
+          </span>
+          <span class="tabular-nums">剩余 {{ progress.daysLeft }} 天</span>
+        </div>
+        <div class="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-line">
           <div
             class="h-full rounded-full bg-accent transition-[width] duration-500"
             :style="{ width: `${progress.percent}%` }"
           />
         </div>
-        <div
-          v-if="expectedMark > 0 && expectedMark < 100"
-          class="absolute top-[-2px] h-3 w-0.5 -translate-x-1/2 rounded-full bg-fg-muted/70"
-          :style="{ left: `${expectedMark}%` }"
-          :title="`今天应有 ${Math.ceil(progress.expectedDone)} 条`"
-        />
-      </div>
+        <p class="mt-2 text-[11px] leading-relaxed text-fg-dim">
+          按当前节奏预计
+          <span class="font-medium text-fg-muted">{{ study.studyPlan?.plan?.finishDay }}</span>
+          全部学完
+          <span v-if="study.studyPlan?.plan?.finishDay">
+            （比截止日 {{ planPaceText }}）
+          </span>
+        </p>
+      </template>
 
-      <div class="mt-3 grid grid-cols-3 gap-2 text-center">
-        <div class="rounded-lg bg-panel-soft px-2 py-2">
-          <p class="text-[10px] text-fg-dim">每天应完成</p>
-          <p class="mt-0.5 text-sm font-semibold text-fg tabular-nums">
-            {{ progress.dailyTarget.toFixed(1) }}
-          </p>
+      <!-- 没有排期时退回线性估算 -->
+      <template v-else>
+        <div class="flex items-end justify-between gap-3">
+          <div>
+            <p class="text-[11px] text-fg-dim">今日应有进度</p>
+            <p class="text-xl font-semibold text-fg tabular-nums">
+              {{ Math.ceil(progress.expectedDone) }}
+              <span class="text-xs font-normal text-fg-dim">/ {{ progress.totalItems }} 条累计</span>
+            </p>
+          </div>
+          <div class="text-right">
+            <p class="text-[11px] text-fg-dim">实际完成</p>
+            <p class="text-xl font-semibold text-fg tabular-nums">
+              {{ progress.doneItems }}
+              <span class="text-xs font-normal text-fg-dim">条</span>
+            </p>
+          </div>
         </div>
-        <div class="rounded-lg bg-panel-soft px-2 py-2">
-          <p class="text-[10px] text-fg-dim">今天还差</p>
-          <p class="mt-0.5 text-sm font-semibold tabular-nums" :class="progress.todayRemaining > 0 ? 'text-amber-glow' : 'text-mint-500 dark:text-mint-400'">
-            {{ progress.todayRemaining > 0 ? progress.todayRemaining : '达标' }}
-          </p>
-        </div>
-        <div class="rounded-lg bg-panel-soft px-2 py-2">
-          <p class="text-[10px] text-fg-dim">剩余天数</p>
-          <p class="mt-0.5 text-sm font-semibold text-fg tabular-nums">{{ progress.daysLeft }}</p>
-        </div>
-      </div>
 
-      <p class="mt-2 text-[11px] leading-relaxed text-fg-dim">
-        第 {{ progress.daysElapsed }} / {{ progress.totalDays }} 天 ·
-        按当前节奏预计 {{ progress.projectedEndDay }} 完成
-        <span v-if="progress.doneToday > 0">· 今天已完成 {{ progress.doneToday }} 条</span>
-      </p>
+        <!-- 双刻度进度条：实心=实际，刻度线=应有 -->
+        <div class="relative mt-3">
+          <div class="h-2 w-full overflow-hidden rounded-full bg-line">
+            <div
+              class="h-full rounded-full bg-accent transition-[width] duration-500"
+              :style="{ width: `${progress.percent}%` }"
+            />
+          </div>
+          <div
+            v-if="expectedMark > 0 && expectedMark < 100"
+            class="absolute top-[-2px] h-3 w-0.5 -translate-x-1/2 rounded-full bg-fg-muted/70"
+            :style="{ left: `${expectedMark}%` }"
+            :title="`今天应有 ${Math.ceil(progress.expectedDone)} 条`"
+          />
+        </div>
+
+        <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+          <div class="rounded-lg bg-panel-soft px-2 py-2">
+            <p class="text-[10px] text-fg-dim">每天应完成</p>
+            <p class="mt-0.5 text-sm font-semibold text-fg tabular-nums">
+              {{ progress.dailyTarget.toFixed(1) }}
+            </p>
+          </div>
+          <div class="rounded-lg bg-panel-soft px-2 py-2">
+            <p class="text-[10px] text-fg-dim">今天还差</p>
+            <p class="mt-0.5 text-sm font-semibold tabular-nums" :class="progress.todayRemaining > 0 ? 'text-amber-glow' : 'text-mint-500 dark:text-mint-400'">
+              {{ progress.todayRemaining > 0 ? progress.todayRemaining : '达标' }}
+            </p>
+          </div>
+          <div class="rounded-lg bg-panel-soft px-2 py-2">
+            <p class="text-[10px] text-fg-dim">剩余天数</p>
+            <p class="mt-0.5 text-sm font-semibold text-fg tabular-nums">{{ progress.daysLeft }}</p>
+          </div>
+        </div>
+
+        <p class="mt-2 text-[11px] leading-relaxed text-fg-dim">
+          第 {{ progress.daysElapsed }} / {{ progress.totalDays }} 天 ·
+          按当前节奏预计 {{ progress.projectedEndDay }} 完成
+          <span v-if="progress.doneToday > 0">· 今天已完成 {{ progress.doneToday }} 条</span>
+        </p>
+      </template>
 
       <!-- 进度：按内容库聚合（时间窗模式下）或按模块（普通模式） -->
       <div v-if="progress.modules.length" class="mt-4 border-t border-line pt-3">
@@ -488,11 +574,11 @@ function modulePaceText(m: ModuleProgress): string {
               />
             </div>
             <p class="mt-0.5 text-[10px] text-fg-dim">
-              <template v-if="m.byLibrary && todayByLib[m.library]">
-                今天该学
-                <span class="font-medium text-fg-muted">{{ todayByLib[m.library].newItems }}</span> 条
-                <span v-if="todayByLib[m.library].reviewItems > 0" class="text-fg-dim/80">
-                  · 复习 {{ todayByLib[m.library].reviewItems }} 条
+              <template v-if="m.byLibrary && planToday">
+                今天新学
+                <span class="font-medium text-fg-muted">{{ planToday.new?.[m.library] ?? 0 }}</span> 条
+                <span v-if="(planToday.review?.[m.library] ?? 0) > 0" class="text-fg-dim/80">
+                  · 复习 {{ planToday.review?.[m.library] }} 条
                 </span>
                 <span class="text-fg-dim/60">（{{ m.minutesPerDay }} 分钟）</span>
               </template>

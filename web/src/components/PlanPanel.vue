@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useStudyStore } from '@/stores'
 import {
@@ -147,8 +147,11 @@ const verdictTone = computed(() => {
             <span class="text-[10px] text-fg-dim">剩 {{ row.remaining }} 条</span>
           </div>
           <p class="mt-0.5 text-[11px] tabular-nums text-fg">
-            每天约 <span class="font-semibold">{{ row.pace.toFixed(1) }}</span> 条
+            全程平均 <span class="font-semibold">{{ row.pace.toFixed(1) }}</span> 条/天
             <span class="text-fg-dim">（每条约 {{ row.minutes }} 分钟）</span>
+          </p>
+          <p class="mt-0.5 text-[10px] leading-snug text-fg-dim">
+            前期多、后期少，具体见下方逐日安排
           </p>
         </div>
       </div>
