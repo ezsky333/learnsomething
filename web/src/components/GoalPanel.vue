@@ -290,6 +290,34 @@ const planTodayReview = computed(() => {
   return Object.values(planToday.value.review ?? {}).reduce((a, b) => a + b, 0)
 })
 
+/**
+ * 今天已经复习了多少条 / 目标多少条。
+ *
+ * 没有这个数字，用户做完 40 条复习后界面还是「今天新学 22 条待完成」，
+ * 看起来像什么都没干。复习是今天真实发生的劳动，必须显示出来。
+ */
+const todayReviewDone = computed(() => study.studyPlan?.today?.reviewDone ?? 0)
+const todayReviewTarget = computed(() => {
+  const t = study.studyPlan?.today
+  if (!t) return planTodayReview.value
+  // 今日复习目标 = 上午已做 + 剩余队列；都有上限约束，取两者能覆盖的最大口径
+  return Math.max(planTodayReview.value, t.reviewDone)
+})
+
+/** 复习进度的颜色：做完了变绿。 */
+const reviewTone = computed(() =>
+  todayReviewDone.value >= todayReviewTarget.value && todayReviewDone.value > 0
+    ? 'text-mint-600 dark:text-mint-400'
+    : 'text-fg',
+)
+
+/** 距离任务开始已经几天（1 表示今天刚开始）。 */
+const startedAgo = computed(() => {
+  const start = study.goal?.startDay
+  if (!start) return 0
+  return daysBetween(start, today()) + 1
+})
+
 /** 有排期时用它，没有则退回线性估算。 */
 const hasPlan = computed(() => planToday.value !== null)
 
@@ -440,11 +468,17 @@ function modulePaceText(m: ModuleProgress): string {
             <p class="text-[10px] text-fg-dim">今天新学</p>
             <p class="mt-0.5 text-lg font-semibold tabular-nums text-accent">
               {{ planTodayNew }}
+              <span class="text-[10px] font-normal text-fg-dim">条</span>
             </p>
           </div>
           <div class="rounded-lg bg-panel-soft px-2 py-2">
             <p class="text-[10px] text-fg-dim">今天复习</p>
-            <p class="mt-0.5 text-lg font-semibold tabular-nums text-fg">{{ planTodayReview }}</p>
+            <p class="mt-0.5 text-lg font-semibold tabular-nums" :class="reviewTone">
+              {{ todayReviewDone }}
+              <span class="text-[10px] font-normal text-fg-dim">
+                / {{ todayReviewTarget }} 条
+              </span>
+            </p>
           </div>
           <div class="rounded-lg bg-panel-soft px-2 py-2">
             <p class="text-[10px] text-fg-dim">今天用时</p>
@@ -455,10 +489,20 @@ function modulePaceText(m: ModuleProgress): string {
           </div>
         </div>
 
+        <!-- 今天复习完的提示：不显示的话，用户会觉得「今天什么都没做」 -->
+        <p
+          v-if="todayReviewDone > 0"
+          class="mt-2 rounded-lg bg-mint-500/10 px-3 py-1.5 text-[11px] leading-relaxed text-mint-600 dark:text-mint-400"
+        >
+          ✓ 今天已完成 {{ todayReviewDone }} 条复习{{ todayReviewDone >= todayReviewTarget ? '，复习额度用完' : '' }}
+          <span v-if="planTodayNew > 0" class="text-fg-dim">· 还剩 {{ planTodayNew }} 条新内容要学</span>
+        </p>
+
         <div class="mt-3 flex items-baseline justify-between text-[11px] text-fg-dim">
           <span>
-            已完成 {{ progress.doneItems }} / {{ progress.totalItems }} 条
+            累计完成 {{ progress.doneItems }} / {{ progress.totalItems }} 条
             （{{ Math.round(progress.percent) }}%）
+            <span v-if="startedAgo > 0" class="text-fg-dim/70">· 已坚持 {{ startedAgo }} 天</span>
           </span>
           <span class="tabular-nums">剩余 {{ progress.daysLeft }} 天</span>
         </div>
@@ -473,7 +517,7 @@ function modulePaceText(m: ModuleProgress): string {
           <span class="font-medium text-fg-muted">{{ study.studyPlan?.plan?.finishDay }}</span>
           全部学完
           <span v-if="study.studyPlan?.plan?.finishDay">
-            （比截止日 {{ planPaceText }}）
+            （{{ planPaceText }}）
           </span>
         </p>
       </template>

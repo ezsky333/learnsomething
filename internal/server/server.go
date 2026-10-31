@@ -536,12 +536,21 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 	// 把勾选的模块按内容库聚合（算法与八股的学习速度不同，要分开算）。
 	libRemaining := map[string]int{}
 	libReviewCap := map[string]int{}
+	libDone := map[string]int{}
 	for _, slug := range goal.DocSlugs {
 		d, ok := docs[slug]
 		if !ok || d.ReadingList {
 			continue
 		}
-		left := d.QuestionCount - doneBySlug[slug]
+		done := doneBySlug[slug]
+		if done > d.QuestionCount {
+			done = d.QuestionCount
+		}
+		// 已完成的也要记账：计划面板要能显示「你昨天已经做了多少」，
+		// 否则一排期就把历史努力当没发生过，看着像今天才起步。
+		libDone[d.Library] += done
+
+		left := d.QuestionCount - done
 		if left < 0 {
 			left = 0
 		}
@@ -616,13 +625,23 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, it := range active {
-		if it.DueDay == "" || it.DueDay < in.StartDay {
-			continue // 已逾期的当成今天到期
+		if it.DueDay == "" {
+			continue // 没有排期的脏数据，忽略
+		}
+		// 逾期内容要把 DueDay 夹到今天，而不是整条跳过。
+		//
+		// 这里原来写的是 `continue`，注释却说「已逾期的当成今天到期」——
+		// 代码和意图正好相反：所有逾期复习都被丢弃，于是排期里看不到任何复习债，
+		// 界面上就会出现「今天该学 22 条、复习 0 条」这种假象，
+		// 明明有一大堆积压等着还。
+		due := it.DueDay
+		if due < in.StartDay {
+			due = in.StartDay
 		}
 		lib := docLibrary(docs, it.DocID)
 		in.Pending = append(in.Pending, plan.Pending{
 			Library: lib,
-			DueDay:  it.DueDay,
+			DueDay:  due,
 			Stage:   it.Stage,
 		})
 	}
@@ -630,12 +649,26 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 	res := plan.Simulate(in)
 	rec := plan.Recommend(in)
 
+	// 今日进度：让界面能显示「今天已经做了多少」，而不是永远像刚起步。
+	cfg, _ := s.store.GetReviewConfig()
+	var reviewDoneToday, reviewDueToday int
+	if rp, err := s.store.ReviewPlan(in.StartDay); err == nil {
+		reviewDoneToday = rp.DoneToday
+		reviewDueToday = rp.DueTotal
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"hasGoal": true,
 		"goal":    goal,
 		"plan":    res,
 		"advice":  rec,
 		"libs":    libRemaining,
+		"libDone": libDone,
+		"today": map[string]any{
+			"reviewDone": reviewDoneToday,
+			"reviewDue":  reviewDueToday,
+			"reviewCap":  cfg.DailyCap,
+		},
 	})
 }
 

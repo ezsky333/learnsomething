@@ -157,6 +157,14 @@ export interface StudyPlanResponse {
   plan?: StudyPlan
   advice?: PlanAdvice
   libs?: Record<string, number>
+  /** 各内容库已完成的条数（不是剩余） */
+  libDone?: Record<string, number>
+  /** 今日进度：复习做了多少、到期多少、上限多少 */
+  today?: {
+    reviewDone: number
+    reviewDue: number
+    reviewCap: number
+  }
 }
 
 export interface Snapshot {

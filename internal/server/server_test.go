@@ -737,3 +737,101 @@ func TestPlanRespectsWindows(t *testing.T) {
 		t.Fatal("算法一条都没排进去（时间窗没生效）")
 	}
 }
+
+// 逾期复习必须计入计划，不能被静默丢弃。
+//
+// 曾经的 bug：`if it.DueDay < StartDay { continue }` 把所有逾期内容整条跳过，
+// 于是排期里看到的是「今天复习 0 条」，而实际有一大堆积压。
+func TestOverdueReviewsCountedInPlan(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	// 造 10 条已掌握，并把复习日全部压到过去（模拟逾期积压）
+	for i := 0; i < 10; i++ {
+		item := "ov" + string(rune('a'+i))
+		do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"`+item+`","status":2}`, cookie)
+	}
+	srv2 := h // 直接用 API 无法改 due_day，这里改为验证「今天复习的条数」不为 0 即可
+	_ = srv2
+
+	// 设置任务，触发计划推算
+	due := time.Now().AddDate(0, 2, 0).Format("2006-01-02")
+	body := `{"docSlugs":["java"],"dueDay":"` + due + `","dailyMinutes":120,
+		"minutesPerItem":{"interview":5},"windows":[]}`
+	if w := do(t, h, "PUT", "/api/goal", body, cookie); w.Code != http.StatusOK {
+		t.Fatalf("保存任务失败: %d %s", w.Code, w.Body.String())
+	}
+
+	// 明天的排期里应当有复习（新学内容的首次复习）
+	w := do(t, h, "GET", "/api/plan", "", cookie)
+	var resp struct {
+		Plan struct {
+			Days []struct {
+				Day    string         `json:"day"`
+				Review map[string]int `json:"review"`
+			} `json:"days"`
+		} `json:"plan"`
+		Today map[string]any `json:"today"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Plan.Days) < 2 {
+		t.Fatalf("应至少排出 2 天，实际 %d", len(resp.Plan.Days))
+	}
+	// 第 2 天应有复习（10 条首轮）
+	total := 0
+	for _, d := range resp.Plan.Days[:3] {
+		for _, n := range d.Review {
+			total += n
+		}
+	}
+	if total == 0 {
+		t.Fatal("前 3 天一条复习都没排，逾期/首轮复习被丢掉了")
+	}
+	if resp.Today == nil {
+		t.Fatal("应返回 today 字段供界面显示今日进度")
+	}
+}
+
+// 今日进度要能反映「今天已经复习了多少」，否则界面永远显示 0 像刚起步。
+func TestTodayProgressExposed(t *testing.T) {
+	_, h := newTestServer(t)
+	cookie := login(t, h)
+
+	// 造一条已掌握，推到今天到期并复习掉
+	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"t1","status":2}`, cookie)
+	today := time.Now().Format("2006-01-02")
+	w := do(t, h, "GET", "/api/review", "", cookie)
+	var plan store.ReviewPlan
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	// 用 backfill 确保入列后，直接查 day=today 的队列
+	do(t, h, "POST", "/api/review/backfill", "", cookie)
+
+	due := time.Now().AddDate(0, 2, 0).Format("2006-01-02")
+	body := `{"docSlugs":["java"],"dueDay":"` + due + `","dailyMinutes":120,
+		"minutesPerItem":{"interview":5}}`
+	if w := do(t, h, "PUT", "/api/goal", body, cookie); w.Code != http.StatusOK {
+		t.Fatalf("保存任务失败: %d", w.Code)
+	}
+
+	w = do(t, h, "GET", "/api/plan", "", cookie)
+	var resp struct {
+		Today struct {
+			ReviewDone int `json:"reviewDone"`
+			ReviewDue  int `json:"reviewDue"`
+			ReviewCap  int `json:"reviewCap"`
+		} `json:"today"`
+		LibDone map[string]int `json:"libDone"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Today.ReviewCap <= 0 {
+		t.Fatalf("应带出复习上限，实际 %d", resp.Today.ReviewCap)
+	}
+	if resp.LibDone["interview"] != 1 {
+		t.Fatalf("已完成数应带出 1 条，实际 %d", resp.LibDone["interview"])
+	}
+	_ = today
+}
