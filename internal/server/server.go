@@ -646,9 +646,6 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	res := plan.Simulate(in)
-	rec := plan.Recommend(in)
-
 	// 今日进度：让界面能显示「今天已经做了多少」，而不是永远像刚起步。
 	cfg, _ := s.store.GetReviewConfig()
 	var reviewDoneToday, reviewDueToday int
@@ -656,6 +653,55 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 		reviewDoneToday = rp.DoneToday
 		reviewDueToday = rp.DueTotal
 	}
+
+	// 今天已经复习掉的条数，要折算成「已用时间」并从今日预算里扣掉。
+	// 不扣的话，下午打开页面会被告知「今天还要学 22 条」，而实际时间早用完了。
+	reviewedByLib, err := s.store.ReviewedTodayByLib(in.StartDay)
+	if err != nil {
+		reviewedByLib = map[string]int{}
+	}
+	if reviewDoneToday > 0 || len(reviewedByLib) > 0 {
+		spent := &plan.SpentToday{ReviewByLib: reviewedByLib, MinutesByWindow: map[string]int{}}
+		for lib, n := range reviewedByLib {
+			if n <= 0 {
+				continue
+			}
+			minutes := goal.MinutesPerItem[lib]
+			if minutes <= 0 {
+				minutes = defaultMinutesPerItem[lib]
+			}
+			if minutes <= 0 {
+				minutes = 5
+			}
+			cost := int(float64(minutes)*0.35+0.5) * n // 首轮复习约 35% 成本
+			if cost < n {
+				cost = n
+			}
+			spent.TotalMinutes += cost
+			// 复习落在哪个窗就扣哪个窗：算法复习占上午，八股复习占下午
+			for _, wn := range goal.Windows {
+				if len(wn.Libs) > 0 {
+					hit := false
+					for _, l := range wn.Libs {
+						if l == lib {
+							hit = true
+							break
+						}
+					}
+					if !hit {
+						continue
+					}
+				}
+				spent.MinutesByWindow[wn.Name] += cost
+				break
+			}
+		}
+		in.Spent = spent
+	}
+
+	// 已用时间改变了今天的可用额度，必须重算一次
+	res := plan.Simulate(in)
+	rec := plan.Recommend(in)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"hasGoal": true,
@@ -668,6 +714,12 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 			"reviewDone": reviewDoneToday,
 			"reviewDue":  reviewDueToday,
 			"reviewCap":  cfg.DailyCap,
+			"minutesSpent": func() int {
+				if in.Spent == nil {
+					return 0
+				}
+				return in.Spent.TotalMinutes
+			}(),
 		},
 	})
 }

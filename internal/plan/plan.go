@@ -114,6 +114,21 @@ type Input struct {
 	// Windows 非空时按时间窗排期（上午/下午各自独立预算）；
 	// 为空则退化成「一天一个总预算」的简单模式。
 	Windows []Window `json:"-"`
+	// Spent 是首日（今天）已经用掉的时间与已还的复习，用于把今天算准。
+	//
+	// 不给的话，中午打开网页时排期会认为今天一整天都还空着，
+	// 给出「今天还要学 22 条」这种明显做不到的数字。
+	Spent *SpentToday `json:"-"`
+}
+
+// SpentToday 记录今天已经发生的投入。
+type SpentToday struct {
+	// ReviewByLib 各库今天已复习的条数。
+	ReviewByLib map[string]int
+	// MinutesByWindow 各时间窗今天已用掉的分钟数（key 为窗口名）。
+	MinutesByWindow map[string]int
+	// TotalMinutes 未分窗模式下今天已用掉的分钟数。
+	TotalMinutes int
 }
 
 // DayPlan 是计划里的一天。
@@ -237,6 +252,16 @@ func Simulate(in Input) Result {
 		}
 		res.StudyDays++
 
+		// 首日要把「今天已经用掉的时间」扣掉，否则排期会把今天当成完整的一天。
+		//
+		// 这是最容易出错的地方：用户在下午打开页面，早上已经复习掉了 40 条，
+		// 排期还按整天预算去排，就会说「今天还要学 22 条」——
+		// 而实际上剩下那点时间连复习债都还不完。
+		dayIn := in
+		if day == in.StartDay && in.Spent != nil {
+			dayIn = applySpent(in)
+		}
+
 		taken := make([]bool, len(pend))
 		newByLib := map[string]int{}
 		reviewByLib := map[string]int{}
@@ -244,12 +269,23 @@ func Simulate(in Input) Result {
 		var reviewMinutes int
 		if len(in.Windows) == 0 {
 			// 简单模式：一天一个总预算，先还复习债再学新内容。
-			reviewMinutes = simPlain(day, in, libs, order, remaining, pend, taken, intervals,
+			reviewMinutes = simPlain(day, dayIn, libs, order, remaining, pend, taken, intervals,
 				newByLib, reviewByLib)
 		} else {
 			// 时间窗模式：每个窗独立列预算，复习和学新都在窗内结算。
-			reviewMinutes = simWindows(day, in, libs, order, remaining, pend, taken, intervals,
+			reviewMinutes = simWindows(day, dayIn, libs, order, remaining, pend, taken, intervals,
 				newByLib, reviewByLib)
+		}
+
+		// 首日已还的复习要如实记进当天排期，否则界面显示「今天复习 0 条」，
+		// 用户明明做了 40 条却看不到任何痕迹。
+		if day == in.StartDay && in.Spent != nil {
+			for lib, n := range in.Spent.ReviewByLib {
+				if n > 0 {
+					reviewByLib[lib] += n
+				}
+			}
+			reviewMinutes += spentReviewMinutes(in.Spent, libs)
 		}
 
 		// ---- 推进已复习内容的阶段 ----
@@ -311,6 +347,53 @@ func Simulate(in Input) Result {
 	}
 	res.Feasible = allDone(remaining)
 	return res
+}
+
+// applySpent 返回「今天已经用掉一部分时间」之后的输入。
+//
+// 只影响首日：把各时间窗的可用分钟数减去今天已经花掉的量，
+// 剩下的才是还能安排新内容的时间。
+func applySpent(in Input) Input {
+	out := in
+	if len(in.Windows) == 0 {
+		left := in.DailyMinutes - in.Spent.TotalMinutes
+		if left < 0 {
+			left = 0
+		}
+		out.DailyMinutes = left
+		return out
+	}
+	ws := make([]Window, len(in.Windows))
+	copy(ws, in.Windows)
+	for i := range ws {
+		used := in.Spent.MinutesByWindow[ws[i].Name]
+		left := ws[i].Minutes - used
+		if left < 0 {
+			left = 0
+		}
+		ws[i].Minutes = left
+	}
+	out.Windows = ws
+	// 同步总预算，供 Recommend 使用
+	total := 0
+	for _, w := range ws {
+		total += w.Minutes
+	}
+	out.DailyMinutes = total
+	return out
+}
+
+// spentReviewMinutes 估算今天已复习的内容花掉了多少分钟。
+func spentReviewMinutes(sp *SpentToday, libs map[string]LibInput) int {
+	total := 0
+	for lib, n := range sp.ReviewByLib {
+		if n <= 0 {
+			continue
+		}
+		cfg := libs[lib]
+		total += n * reviewCost(cfg, 0)
+	}
+	return total
 }
 
 // reviewCost 返回复习一条内容要多少分钟。

@@ -1108,6 +1108,30 @@ func (s *Store) ReviewPlanAhead(day string, ahead int) (ReviewPlan, error) {
 	return plan, nil
 }
 
+// ReviewedTodayByLib 返回某天各内容库已经复习了多少条。
+//
+// 用途：推算「今天还剩多少时间可用于学新内容」时，必须扣掉今天已经花掉的复习。
+// 不扣的话，用户中午做完 40 条复习，排期还按「一整天 190 分钟全空着」去算，
+// 会得出「今天还要学 22 条」这种明显做不到的数字。
+func (s *Store) ReviewedTodayByLib(day string) (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT doc_id, COUNT(*) FROM review_log
+		WHERE day = ? GROUP BY doc_id`, day)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var doc string
+		var n int
+		if err := rows.Scan(&doc, &n); err != nil {
+			return nil, err
+		}
+		out[s.libOf(doc)] += n
+	}
+	return out, rows.Err()
+}
+
 // ReviewLogsByDay 返回最近若干天每天复习的条数，用于趋势展示。
 func (s *Store) ReviewLogsByDay(sinceDay string) (map[string]int, error) {
 	rows, err := s.db.Query(`SELECT day, COUNT(*) FROM review_log WHERE day >= ? GROUP BY day`, sinceDay)

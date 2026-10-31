@@ -164,6 +164,8 @@ export interface StudyPlanResponse {
     reviewDone: number
     reviewDue: number
     reviewCap: number
+    /** 今天已经花掉的分钟数（用于从今日预算里扣减） */
+    minutesSpent?: number
   }
 }
 

@@ -304,6 +304,9 @@ const todayReviewTarget = computed(() => {
   return Math.max(planTodayReview.value, t.reviewDone)
 })
 
+/** 今天已经花掉的分钟数。 */
+const minutesSpent = computed(() => study.studyPlan?.today?.minutesSpent ?? 0)
+
 /** 复习进度的颜色：做完了变绿。 */
 const reviewTone = computed(() =>
   todayReviewDone.value >= todayReviewTarget.value && todayReviewDone.value > 0
@@ -494,8 +497,10 @@ function modulePaceText(m: ModuleProgress): string {
           v-if="todayReviewDone > 0"
           class="mt-2 rounded-lg bg-mint-500/10 px-3 py-1.5 text-[11px] leading-relaxed text-mint-600 dark:text-mint-400"
         >
-          ✓ 今天已完成 {{ todayReviewDone }} 条复习{{ todayReviewDone >= todayReviewTarget ? '，复习额度用完' : '' }}
-          <span v-if="planTodayNew > 0" class="text-fg-dim">· 还剩 {{ planTodayNew }} 条新内容要学</span>
+          ✓ 今天已完成 {{ todayReviewDone }} 条复习<template v-if="minutesSpent > 0">（约 {{ minutesSpent }} 分钟）</template>{{ todayReviewDone >= todayReviewTarget ? '，复习额度用完' : '' }}
+          <span v-if="planTodayNew > 0" class="text-fg-dim">
+            · 剩余时间够学 {{ planTodayNew }} 条新内容
+          </span>
         </p>
 
         <div class="mt-3 flex items-baseline justify-between text-[11px] text-fg-dim">

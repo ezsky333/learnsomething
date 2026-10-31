@@ -495,3 +495,63 @@ func TestMorningWindowLimitsAlgo(t *testing.T) {
 		t.Fatal("应学不完")
 	}
 }
+
+// ---------- 今天已经用掉的时间必须扣掉 ----------
+
+// 中途打开页面时，今天已复习掉的时间要从今天的预算里扣掉。
+// 不扣的话会被告知「今天还要学 22 条」，而实际只剩一点点时间。
+func TestSpentTimeReducesTodayBudget(t *testing.T) {
+	full := windowInput(150)
+	full.DueDay = "2026-06-30"
+
+	spent := windowInput(150)
+	spent.DueDay = "2026-06-30"
+	spent.Spent = &SpentToday{
+		ReviewByLib:     map[string]int{"interview": 30, "algo": 6},
+		MinutesByWindow: map[string]int{"morning": 54, "evening": 90},
+		TotalMinutes:    144,
+	}
+
+	a := Simulate(full)
+	b := Simulate(spent)
+	if len(a.Days) == 0 || len(b.Days) == 0 {
+		t.Fatal("应排出天数")
+	}
+
+	newA := 0
+	for _, n := range a.Days[0].New {
+		newA += n
+	}
+	newB := 0
+	for _, n := range b.Days[0].New {
+		newB += n
+	}
+	if newB >= newA {
+		t.Fatalf("今天已用掉 %d 分钟后，新学量应减少：%d -> %d", 144, newA, newB)
+	}
+	// 首日已复习的条数要如实体现
+	if b.Days[0].Review["interview"] < 30 {
+		t.Fatalf("首日应显示已复习 30 条八股，实际 %d", b.Days[0].Review["interview"])
+	}
+}
+
+// 已用时间超出预算时，今天不该再安排新内容（而不是排出负数）。
+func TestSpentExceedingBudgetLeavesNoNew(t *testing.T) {
+	in := windowInput(150)
+	in.Spent = &SpentToday{
+		ReviewByLib:     map[string]int{"interview": 40},
+		MinutesByWindow: map[string]int{"morning": 60, "evening": 90},
+		TotalMinutes:    200,
+	}
+	res := Simulate(in)
+	newTotal := 0
+	for _, n := range res.Days[0].New {
+		newTotal += n
+	}
+	if newTotal != 0 {
+		t.Fatalf("预算已用尽，今天不该再安排新内容，实际 %d 条", newTotal)
+	}
+	if res.Days[0].MinutesUsed < 0 {
+		t.Fatal("用时不该为负")
+	}
+}
