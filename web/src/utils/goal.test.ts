@@ -184,71 +184,87 @@ test('today() 与 dayOffset(0) 一致', () => {
   assert.equal(today(), dayOffset(0))
 })
 
-// ---------- 分模块进度 ----------
+// ---------- 按内容库聚合的进度 ----------
+//
+// 这里测的是「聚合粒度」：不管勾了多少个文档模块，界面都只按
+// 算法 / 八股 / 大模型 这几行显示。所以下面每一条都至少涉及两个库。
 
-test('分模块：各模块独立计算应有进度', () => {
-  // 用户勾选：java(100条) + 链表(50条)，10 天
-  const docs = [doc('java', 100), doc('list', 50)]
-  const g = goal(['java', 'list'], dayOffset(-4), dayOffset(5)) // 第 5 天
-  const done: Record<string, number> = { java: 50, list: 0 }
+test('按库聚合：各库独立计算应有进度', () => {
+  // 八股 100 条 + 算法 50 条，10 天
+  const docs = [docLib('java', 100, 'interview'), docLib('algo-array', 50, 'algo')]
+  const g = goalMin(['java', 'algo-array'], dayOffset(-4), dayOffset(5), 120)
+  const done: Record<string, number> = { java: 50, 'algo-array': 0 }
   const p = computeGoalProgress(g, docs, (s) => done[s] ?? 0)
 
   assert.equal(p.modules.length, 2)
 
-  const java = p.modules.find((m) => m.slug === 'java')!
-  const list = p.modules.find((m) => m.slug === 'list')!
+  const iv = p.modules.find((m) => m.slug === 'lib:interview')!
+  const algo = p.modules.find((m) => m.slug === 'lib:algo')!
 
-  // java: 每天 10 条，第 5 天应有 50，实际 50 → 正好
-  assert.equal(java.totalItems, 100)
-  assert.equal(java.dailyTarget, 10)
-  assert.equal(java.expectedDone, 50)
-  assert.equal(java.aheadBy, 0)
-  assert.equal(java.pace, 'onTrack')
+  // 八股 100 条在 10 天里均摊 → 每天 10 条，第 5 天应有 50，实际 50 → 正好
+  assert.equal(iv.totalItems, 100)
+  assert.equal(iv.dailyTarget, 10)
+  assert.equal(iv.expectedDone, 50)
+  assert.equal(iv.aheadBy, 0)
+  assert.equal(iv.pace, 'onTrack')
 
-  // 链表: 每天 5 条，第 5 天应有 25，实际 0 → 落后 25
-  assert.equal(list.totalItems, 50)
-  assert.equal(list.dailyTarget, 5)
-  assert.equal(list.expectedDone, 25)
-  assert.equal(list.aheadBy, -25)
-  assert.equal(list.pace, 'behind')
-  assert.equal(list.todayRemaining, 25)
+  // 算法 50 条 → 每天 5 条，第 5 天应有 25，实际 0 → 落后 25
+  assert.equal(algo.totalItems, 50)
+  assert.equal(algo.dailyTarget, 5)
+  assert.equal(algo.expectedDone, 25)
+  assert.equal(algo.aheadBy, -25)
+  assert.equal(algo.pace, 'behind')
+  assert.equal(algo.todayRemaining, 25)
 })
 
-test('分模块：一个已完成的模块显示 done', () => {
-  const docs = [doc('a', 10), doc('b', 20)]
-  const g = goal(['a', 'b'], dayOffset(-2), dayOffset(7))
-  const done: Record<string, number> = { a: 10, b: 0 }
+test('按库聚合：某个库学完了显示 done', () => {
+  const docs = [docLib('java', 10, 'interview'), docLib('algo-array', 20, 'algo')]
+  const g = goalMin(['java', 'algo-array'], dayOffset(-2), dayOffset(7), 120)
+  const done: Record<string, number> = { java: 10, 'algo-array': 0 }
   const p = computeGoalProgress(g, docs, (s) => done[s] ?? 0)
-  const a = p.modules.find((m) => m.slug === 'a')!
-  assert.equal(a.pace, 'done')
-  assert.equal(a.percent, 100)
+  const iv = p.modules.find((m) => m.slug === 'lib:interview')!
+  assert.equal(iv.pace, 'done')
+  assert.equal(iv.percent, 100)
 })
 
-test('分模块：自定每日目标按条数占比分摊', () => {
-  // a 有 30 条、b 有 10 条，总共 40；自定每天 20 条
-  // 按占比：a 应分到 20*(30/40)=15，b 分到 20*(10/40)=5
-  const docs = [doc('a', 30), doc('b', 10)]
-  const g = goal(['a', 'b'], dayOffset(0), dayOffset(3), 20)
+test('按库聚合：自定每日目标按工作量占比分摊', () => {
+  // 八股 30 条、算法 10 条，总共 40；自定每天 20 条，都没配单价 → 权重退化为条数
+  // 按占比：八股 20*(30/40)=15，算法 20*(10/40)=5
+  const docs = [docLib('a', 30, 'interview'), docLib('b', 10, 'algo')]
+  const g = goalMin(['a', 'b'], dayOffset(0), dayOffset(3), 120)
+  g.dailyTarget = 20
   const p = computeGoalProgress(g, docs, () => 0)
-  const a = p.modules.find((m) => m.slug === 'a')!
-  const b = p.modules.find((m) => m.slug === 'b')!
-  assert.equal(Number(a.dailyTarget.toFixed(2)), 15)
-  assert.equal(Number(b.dailyTarget.toFixed(2)), 5)
-  // 各模块每日额度之和 = 总日目标
-  assert.equal(Number((a.dailyTarget + b.dailyTarget).toFixed(2)), 20)
+  const iv = p.modules.find((m) => m.slug === 'lib:interview')!
+  const algo = p.modules.find((m) => m.slug === 'lib:algo')!
+  assert.equal(Number(iv.dailyTarget.toFixed(2)), 15)
+  assert.equal(Number(algo.dailyTarget.toFixed(2)), 5)
+  // 各库每日额度之和 = 总日目标
+  assert.equal(Number((iv.dailyTarget + algo.dailyTarget).toFixed(2)), 20)
 })
 
-test('分模块：阅读清单模块不出现在列表里', () => {
-  const docs = [doc('a', 10), doc('reading', 99, true)]
-  const g = goal(['a', 'reading'], dayOffset(0), dayOffset(9))
+test('按库聚合：阅读清单模块不计入统计', () => {
+  const docs = [
+    docLib('a', 10, 'interview'),
+    docLib('reading', 99, 'interview'),
+    docLib('algo', 7, 'algo'),
+  ]
+  // 把 reading 标成阅读清单
+  docs[1].readingList = true
+  const g = goalMin(['a', 'reading', 'algo'], dayOffset(0), dayOffset(9), 120)
   const p = computeGoalProgress(g, docs, () => 0)
-  assert.equal(p.modules.length, 1)
-  assert.equal(p.modules[0].slug, 'a')
+  const iv = p.modules.find((m) => m.slug === 'lib:interview')!
+  // 八股只算 a 的 10 条，不该把阅读清单的 99 条算进来
+  assert.equal(iv.totalItems, 10)
+  assert.equal(p.modules.length, 2)
 })
 
-test('分模块：模块进度之和等于总体进度', () => {
-  const docs = [doc('a', 30), doc('b', 50), doc('c', 20)]
-  const g = goal(['a', 'b', 'c'], dayOffset(-3), dayOffset(6))
+test('按库聚合：各库进度之和等于总体进度', () => {
+  const docs = [
+    docLib('a', 30, 'interview'),
+    docLib('b', 50, 'interview'),
+    docLib('c', 20, 'algo'),
+  ]
+  const g = goalMin(['a', 'b', 'c'], dayOffset(-3), dayOffset(6), 120)
   const done: Record<string, number> = { a: 12, b: 5, c: 20 }
   const p = computeGoalProgress(g, docs, (s) => done[s] ?? 0)
   const sumDone = p.modules.reduce((s, m) => s + m.doneItems, 0)
@@ -257,10 +273,11 @@ test('分模块：模块进度之和等于总体进度', () => {
   assert.equal(sumTotal, p.totalItems)
 })
 
-test('分模块：过期任务各模块都是 expired', () => {
-  const docs = [doc('a', 10), doc('b', 10)]
-  const g = goal(['a', 'b'], dayOffset(-9), dayOffset(-2))
+test('按库聚合：过期任务各库都是 expired', () => {
+  const docs = [docLib('a', 10, 'interview'), docLib('b', 10, 'algo')]
+  const g = goalMin(['a', 'b'], dayOffset(-9), dayOffset(-2), 120)
   const p = computeGoalProgress(g, docs, () => 1)
+  assert.equal(p.modules.length, 2)
   for (const m of p.modules) {
     assert.equal(m.pace, 'expired')
   }
@@ -306,13 +323,17 @@ test('按时间预算分库时，八股每日条数应远高于算法', () => {
   const g = goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(30), 120)
   const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
 
-  const java = mods.find((m) => m.slug === 'java')!
-  const algo = mods.find((m) => m.slug === 'algo-array')!
+  // 一律按内容库聚合：算法与八股各一行，不会拆成 19 个子模块平铺
+  const iv = mods.find((m) => m.slug === 'lib:interview')!
+  const algo = mods.find((m) => m.slug === 'lib:algo')!
+  if (!iv || !algo) {
+    throw new Error(`应按库聚合出 lib:interview / lib:algo，实际 ${mods.map((m) => m.slug).join(',')}`)
+  }
 
   // 79*5=395 分钟  vs  9*25=225 分钟 → 八股占 64% 的时间
   // 八股每天 ≈ 120*0.637/5 ≈ 15.3 条；算法 ≈ 120*0.363/25 ≈ 1.7 条
-  if (!(java.dailyTarget > algo.dailyTarget * 4)) {
-    throw new Error(`八股日均应远高于算法：${java.dailyTarget.toFixed(1)} vs ${algo.dailyTarget.toFixed(1)}`)
+  if (!(iv.dailyTarget > algo.dailyTarget * 4)) {
+    throw new Error(`八股日均应远高于算法：${iv.dailyTarget.toFixed(1)} vs ${algo.dailyTarget.toFixed(1)}`)
   }
   // 算法至少得有 1 条以上，不能被抹成 0
   if (algo.dailyTarget < 1) {
@@ -342,12 +363,61 @@ test('每日分钟数越多，两个库的每日条数都随之上升', () => {
     () => 0,
     { interview: 5, algo: 25 },
   )
-  const jl = low.find((m) => m.slug === 'java')!.dailyTarget
-  const jh = high.find((m) => m.slug === 'java')!.dailyTarget
-  const al = low.find((m) => m.slug === 'algo-array')!.dailyTarget
-  const ah = high.find((m) => m.slug === 'algo-array')!.dailyTarget
+  const jl = low.find((m) => m.slug === 'lib:interview')!.dailyTarget
+  const jh = high.find((m) => m.slug === 'lib:interview')!.dailyTarget
+  const al = low.find((m) => m.slug === 'lib:algo')!.dailyTarget
+  const ah = high.find((m) => m.slug === 'lib:algo')!.dailyTarget
   if (!(jh > jl && ah > al)) {
-    throw new Error(`时间翻倍应让两库都加速：java ${jl.toFixed(1)}→${jh.toFixed(1)}, algo ${al.toFixed(1)}→${ah.toFixed(1)}`)
+    throw new Error(`时间翻倍应让两库都加速：八股 ${jl.toFixed(1)}→${jh.toFixed(1)}, 算法 ${al.toFixed(1)}→${ah.toFixed(1)}`)
+  }
+})
+
+// 用户明确要求：不管有没有配时间窗，都只按「算法 / 八股」两行显示，
+// 不要把 19 个文档模块平铺出来。
+test('没有时间窗时仍然按内容库聚合，而不是列出每个模块', () => {
+  const docs = [
+    docLib('java', 79, 'interview'),
+    docLib('mysql', 115, 'interview'),
+    docLib('redis', 69, 'interview'),
+    docLib('algo-array', 9, 'algo'),
+    docLib('algo-linked-list', 8, 'algo'),
+  ]
+  const g = goalMin(
+    ['java', 'mysql', 'redis', 'algo-array', 'algo-linked-list'],
+    dayOffset(-1),
+    dayOffset(60),
+    150,
+  )
+  g.windows = [] // 关键：没有时间窗
+  const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
+
+  if (mods.length !== 2) {
+    throw new Error(`应聚合为 2 行（算法/八股），实际 ${mods.length} 行：${mods.map((m) => m.slug).join(',')}`)
+  }
+  const iv = mods.find((m) => m.slug === 'lib:interview')
+  const algo = mods.find((m) => m.slug === 'lib:algo')
+  if (!iv || !algo) {
+    throw new Error('应有 lib:interview 与 lib:algo')
+  }
+  // 条数是各模块之和
+  if (iv.totalItems !== 79 + 115 + 69) {
+    throw new Error(`八股总数应为 263，实际 ${iv.totalItems}`)
+  }
+  if (algo.totalItems !== 9 + 8) {
+    throw new Error(`算法总数应为 17，实际 ${algo.totalItems}`)
+  }
+  // 算法在前
+  if (mods[0].slug !== 'lib:algo') {
+    throw new Error(`算法应排第一行，实际 ${mods[0].slug}`)
+  }
+  // 没有时间窗时 minutesPerDay 应为 0（没有「时段额度」这个概念），
+  // 否则界面会显示一个凭空的分钟数
+  if (iv.minutesPerDay !== 0) {
+    throw new Error(`没有时间窗时分钟数应为 0，实际 ${iv.minutesPerDay}`)
+  }
+  // 但每日条数仍要算出来（按工作量占比分摊总预算）
+  if (!(iv.dailyTarget > 0 && algo.dailyTarget > 0)) {
+    throw new Error(`没有时间窗也要算出每日额度：八股 ${iv.dailyTarget}, 算法 ${algo.dailyTarget}`)
   }
 })
 
@@ -406,15 +476,15 @@ test('新八股库（jds）在按库聚合时标题是「八股」', () => {
   }
 })
 
-test('没有时间窗时退回按工作量分摊（行为不变）', () => {
+test('没有时间窗时按工作量占比分摊总预算（现在也按库聚合）', () => {
   const docs = [docLib('java', 79, 'interview'), docLib('algo-array', 9, 'algo')]
   const g = goalMin(['java', 'algo-array'], dayOffset(-1), dayOffset(30), 120)
   g.windows = []
   const mods = computeModuleProgress(g, docs, () => 0, { interview: 5, algo: 25 })
-  const java = mods.find((m) => m.slug === 'java')!
-  const algo = mods.find((m) => m.slug === 'algo-array')!
+  const iv = mods.find((m) => m.slug === 'lib:interview')!
+  const algo = mods.find((m) => m.slug === 'lib:algo')!
   // 八股权重 395、算法 225，总 620 → 八股 76.5 分钟/天 → 15.3 条
-  if (!(java.dailyTarget > algo.dailyTarget)) {
+  if (!(iv.dailyTarget > algo.dailyTarget)) {
     throw new Error('八股仍应快于算法')
   }
 })

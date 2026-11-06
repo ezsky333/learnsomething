@@ -153,15 +153,18 @@ export function computeModuleProgress(
   }, 0)
 
   /**
-   * 某个库每天可用的分钟数。
+   * 某个库每天可用的分钟数（仅时间窗模式有意义）。
    *
    * 配置了时间窗时不能用「全天总时间」再去按权重分摊 —— 算法只能用上午那段，
    * 八股只能用下午那段。否则会算出「算法每天 0.2 条」这种明显不对的数字
    * （和计划推算面板的「每天 2.0 条」自相矛盾）。
+   *
+   * 没有时间窗时返回 0，表示「没有时段额度这个概念」，
+   * 调用方应退回「按总量占比分摊每日预算」。
    */
   const windows = goal.windows ?? []
   const minutesForLib = (library: string): number => {
-    if (windows.length === 0) return 0 // 没有时间窗时走「按工作量分摊」的老路
+    if (windows.length === 0) return 0
     let sum = 0
     let matched = false
     for (const w of windows) {
@@ -175,13 +178,16 @@ export function computeModuleProgress(
 
   const out: ModuleProgress[] = []
 
-  // 时间窗模式：按「内容库」聚合，而不是按子模块。
+  // 一律按「内容库」聚合，不按文档模块。
   //
-  // 理由很实际：计划本身是「上午学算法、下午学八股」这个粒度，
-  // 拆到「数组每天 0.2 条、链表每天 0.2 条」既没法执行，也没法判断进度 ——
-  // 人不会今天数着做「数组 0.2 条 + 链表 0.2 条」，真实行为是
-  // 「今天算法这 2 条，明天算法那 2 条」。
-  if (windows.length > 0) {
+  // 这个粒度是用户真实的心智粒度：他会想「今天算法几条、八股几条」，
+  // 不会想「数组 0.2 条、链表 0.2 条」。19 个模块平铺出来，
+  // 每天每行都是零点几条，既没法执行也没法判断进度。
+  //
+  // 注意这**不能**取决于有没有配时间窗。曾经写成「有窗才按库聚合」，
+  // 结果用户一取消时间窗改成只填总时长，界面立刻炸回 19 行 ——
+  // 分组方式不该被一个无关的配置项左右。
+  {
     const byLib = new Map<string, { total: number; done: number; docs: DocMeta[] }>()
     for (const doc of usable) {
       const cur = byLib.get(doc.library) ?? { total: 0, done: 0, docs: [] }
@@ -193,24 +199,33 @@ export function computeModuleProgress(
     for (const [library, agg] of byLib) {
       const per = minutesOf(library)
       const libMinutes = minutesForLib(library)
+      const total = agg.total
+      const done = agg.done
+      // 该库的工作量权重（分钟）。用于把每日预算按工作量分给各库 ——
+      // 按条数分是错的：算法一条 25 分钟、八股一条 9 分钟，
+      // 同样条数的时间成本差近三倍。
+      const weight = per > 0 ? total * per : total
+
       let daily: number
       if (goal.dailyTarget > 0 && grandTotal > 0) {
-        // 自定总目标时按该库工作量占比分摊
-        const w = per > 0 ? agg.total * per : agg.total
-        daily = goal.dailyTarget * (w / grandTotal)
-      } else if (per > 0) {
-        // 时间窗模式：直接用该库在窗里能拿到的分钟数 ÷ 单条成本。
-        // 没有被任何窗包含时 libMinutes 为 0，额度也就是 0 ——
+        // 自定总目标：按工作量占比分摊条数目标
+        daily = goal.dailyTarget * (weight / grandTotal)
+      } else if (windows.length > 0 && per > 0) {
+        // 有时间窗：直接用该库在窗里拿到的分钟数 ÷ 单条成本。
+        // 没被任何窗包含时 libMinutes 为 0，额度也就是 0 ——
         // 不能退回「按总天数均摊」，那等于凭空给自己安排了做不到的任务。
         daily = libMinutes / per
+      } else if (per > 0 && goal.dailyMinutes > 0 && grandTotal > 0) {
+        // 没有时间窗：把每天总预算按工作量占比分给各库，再除以单条成本。
+        // 这样各库的完成时间会自然对齐 —— 谁也不会先学完干等着。
+        const shareMinutes = goal.dailyMinutes * (weight / grandTotal)
+        daily = shareMinutes / per
       } else if (totalDays > 0) {
-        daily = agg.total / totalDays
+        daily = total / totalDays
       } else {
         daily = 0
       }
 
-      const total = agg.total
-      const done = agg.done
       const expected = Math.min(total, daily * daysElapsed)
       const ahead = done - expected
       const remain = Math.max(0, Math.ceil(expected - done))
@@ -230,7 +245,8 @@ export function computeModuleProgress(
       out.push({
         slug: `lib:${library}`,
         title: LIBRARY_NAME[library] ?? library,
-        group: goal.windows?.find((w) => w.libs.length === 0 || w.libs.includes(library))?.name ?? '',
+        // 有窗时显示窗名（「上午」），没窗时没有时段概念，留空。
+        group: windows.find((w) => w.libs.length === 0 || w.libs.includes(library))?.name ?? '',
         library,
         totalItems: total,
         doneItems: done,
@@ -241,6 +257,8 @@ export function computeModuleProgress(
         dailyTarget: daily,
         pace,
         byLibrary: true,
+        // 只有真的配了窗，这里才是个有意义的「每天多少分钟」；
+        // 否则留 0，界面不要拿它当额度展示。
         minutesPerDay: libMinutes,
       })
     }
@@ -249,57 +267,6 @@ export function computeModuleProgress(
     out.sort((a, b) => order.indexOf(a.library) - order.indexOf(b.library))
     return out
   }
-
-  for (const doc of usable) {
-    const total = doc.questionCount
-    const done = Math.min(doneOf(doc.slug), total)
-    const per = minutesOf(doc.library)
-    const weight = per > 0 ? total * per : total
-
-    // 每天的额度：有自定总目标时按工作量占比分摊，否则按总时间预算分摊
-    let daily: number
-    if (goal.dailyTarget > 0 && grandTotal > 0) {
-      daily = goal.dailyTarget * (weight / grandTotal)
-    } else if (per > 0 && goal.dailyMinutes > 0) {
-      // 按时间预算反推：每天的时间先按工作量分给这个模块，再除以单条成本
-      const shareMinutes = goal.dailyMinutes * (weight / (grandTotal || 1))
-      daily = shareMinutes / per
-    } else {
-      daily = total / totalDays
-    }
-
-    const expected = Math.min(total, daily * daysElapsed)
-    const ahead = done - expected
-    const remain = Math.max(0, Math.ceil(expected - done))
-    const percent = total > 0 ? Math.min(100, (done / total) * 100) : 0
-
-    let pace: PaceLevel
-    if (total > 0 && done >= total) pace = 'done'
-    else if (expired) pace = 'expired'
-    else {
-      const unit = daily || 1
-      if (ahead >= unit) pace = 'ahead'
-      else if (ahead >= -0.5 * unit) pace = 'onTrack'
-      else if (ahead >= -2 * unit) pace = 'slightlyBehind'
-      else pace = 'behind'
-    }
-
-    out.push({
-      slug: doc.slug,
-      title: doc.title,
-      group: doc.group,
-      library: doc.library,
-      totalItems: total,
-      doneItems: done,
-      percent,
-      expectedDone: expected,
-      aheadBy: ahead,
-      todayRemaining: remain,
-      dailyTarget: daily,
-      pace,
-    })
-  }
-  return out
 }
 
 /** 节奏评价：给用户一句人话。 */

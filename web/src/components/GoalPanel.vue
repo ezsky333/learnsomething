@@ -604,11 +604,9 @@ function modulePaceText(m: ModuleProgress): string {
         </p>
       </template>
 
-      <!-- 进度：按内容库聚合（时间窗模式下）或按模块（普通模式） -->
+      <!-- 进度：固定按内容库（算法 / 八股 / 大模型）聚合 -->
       <div v-if="progress.modules.length" class="mt-4 border-t border-line pt-3">
-        <p class="mb-2 text-[11px] font-medium text-fg-muted">
-          {{ progress.modules[0]?.byLibrary ? '进度（按内容库）' : '分模块进度' }}
-        </p>
+        <p class="mb-2 text-[11px] font-medium text-fg-muted">进度（按内容库）</p>
         <div class="space-y-2.5">
           <div v-for="m in progress.modules" :key="m.slug">
             <div class="flex items-baseline gap-2">
@@ -639,13 +637,13 @@ function modulePaceText(m: ModuleProgress): string {
               />
             </div>
             <p class="mt-0.5 text-[10px] text-fg-dim">
-              <template v-if="m.byLibrary && planToday">
+              <template v-if="planToday">
                 今天新学
                 <span class="font-medium text-fg-muted">{{ planToday.new?.[m.library] ?? 0 }}</span> 条
                 <span v-if="(planToday.review?.[m.library] ?? 0) > 0" class="text-fg-dim/80">
                   · 复习 {{ planToday.review?.[m.library] }} 条
                 </span>
-                <span class="text-fg-dim/60">（{{ m.minutesPerDay }} 分钟）</span>
+                <span v-if="m.minutesPerDay" class="text-fg-dim/60">（{{ m.minutesPerDay }} 分钟）</span>
               </template>
               <template v-else>
                 今天应到 {{ Math.ceil(m.expectedDone) }} 条
