@@ -57,11 +57,11 @@ watch(
 
       <div class="ml-auto flex items-center gap-1">
         <a
-          href="https://xiaolincoding.com/interview/"
+          href="https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/"
           target="_blank"
           rel="noopener noreferrer"
           class="btn btn-ghost hidden text-xs sm:inline-flex"
-          title="内容来源：小林coding"
+          title="内容来源：Java大神 javadashen.com"
         >
           原文
         </a>
@@ -88,12 +88,12 @@ watch(
         {{ link.label }}
       </RouterLink>
       <a
-        href="https://xiaolincoding.com/interview/"
+        href="https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/"
         target="_blank"
         rel="noopener noreferrer"
         class="block rounded-lg px-3 py-2 text-sm text-fg-muted hover:bg-panel-soft"
       >
-        原文（xiaolincoding.com）
+        原文（javadashen.com）
       </a>
     </div>
   </header>

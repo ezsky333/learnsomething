@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T01:31:46Z",
+  "generatedAt": "2026-11-06T07:53:34Z",
   "docs": [
     {
       "slug": "algo-fundamentals",
@@ -179,7 +179,8 @@
       "sectionCount": 16,
       "questionCount": 79,
       "charCount": 68172,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "collections",
@@ -191,7 +192,8 @@
       "sectionCount": 5,
       "questionCount": 69,
       "charCount": 54018,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "juc",
@@ -203,7 +205,8 @@
       "sectionCount": 4,
       "questionCount": 73,
       "charCount": 83987,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "jvm",
@@ -215,7 +218,8 @@
       "sectionCount": 4,
       "questionCount": 60,
       "charCount": 37162,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "spring",
@@ -227,7 +231,8 @@
       "sectionCount": 5,
       "questionCount": 84,
       "charCount": 60594,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "cpp",
@@ -239,7 +244,8 @@
       "sectionCount": 10,
       "questionCount": 112,
       "charCount": 66003,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "golang",
@@ -251,7 +257,8 @@
       "sectionCount": 12,
       "questionCount": 113,
       "charCount": 54189,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "python",
@@ -263,7 +270,8 @@
       "sectionCount": 12,
       "questionCount": 118,
       "charCount": 39700,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "mysql",
@@ -275,7 +283,8 @@
       "sectionCount": 8,
       "questionCount": 115,
       "charCount": 63241,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "redis",
@@ -287,7 +296,8 @@
       "sectionCount": 7,
       "questionCount": 69,
       "charCount": 51339,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "os",
@@ -299,7 +309,8 @@
       "sectionCount": 7,
       "questionCount": 75,
       "charCount": 38743,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "network",
@@ -311,7 +322,8 @@
       "sectionCount": 6,
       "questionCount": 96,
       "charCount": 48724,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "data",
@@ -323,7 +335,8 @@
       "sectionCount": 3,
       "questionCount": 53,
       "charCount": 45333,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "mq",
@@ -335,7 +348,8 @@
       "sectionCount": 4,
       "questionCount": 53,
       "charCount": 30348,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "cap",
@@ -347,7 +361,8 @@
       "sectionCount": 7,
       "questionCount": 34,
       "charCount": 28226,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "systemdesign",
@@ -359,7 +374,8 @@
       "sectionCount": 1,
       "questionCount": 19,
       "charCount": 30329,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "linux",
@@ -371,7 +387,8 @@
       "sectionCount": 1,
       "questionCount": 21,
       "charCount": 8462,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "git",
@@ -383,7 +400,8 @@
       "sectionCount": 1,
       "questionCount": 23,
       "charCount": 9261,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "docker",
@@ -395,7 +413,8 @@
       "sectionCount": 1,
       "questionCount": 22,
       "charCount": 10214,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "business_testing",
@@ -407,7 +426,8 @@
       "sectionCount": 6,
       "questionCount": 148,
       "charCount": 31832,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "python_automation",
@@ -419,7 +439,8 @@
       "sectionCount": 3,
       "questionCount": 60,
       "charCount": 35898,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "java_automation",
@@ -431,7 +452,8 @@
       "sectionCount": 3,
       "questionCount": 60,
       "charCount": 14828,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "performance_testing",
@@ -443,7 +465,8 @@
       "sectionCount": 5,
       "questionCount": 100,
       "charCount": 22084,
-      "library": "interview"
+      "library": "interview",
+      "archived": true
     },
     {
       "slug": "win",
@@ -456,7 +479,8 @@
       "questionCount": 34,
       "charCount": 2476,
       "library": "interview",
-      "readingList": true
+      "readingList": true,
+      "archived": true
     },
     {
       "slug": "ai-agent",
@@ -529,6 +553,114 @@
       "questionCount": 14,
       "charCount": 78731,
       "library": "ai"
+    },
+    {
+      "slug": "jds-java-basic",
+      "title": "Java 基础",
+      "group": "高频面试题 · Java大神",
+      "order": 1,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 3,
+      "questionCount": 21,
+      "charCount": 57236,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-concurrency",
+      "title": "Java 并发",
+      "group": "高频面试题 · Java大神",
+      "order": 2,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 3,
+      "questionCount": 19,
+      "charCount": 56013,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-jvm",
+      "title": "JVM",
+      "group": "高频面试题 · Java大神",
+      "order": 3,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 2,
+      "questionCount": 14,
+      "charCount": 40353,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-spring",
+      "title": "Spring 全家桶",
+      "group": "高频面试题 · Java大神",
+      "order": 4,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 5,
+      "questionCount": 43,
+      "charCount": 129061,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-database",
+      "title": "数据库",
+      "group": "高频面试题 · Java大神",
+      "order": 5,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 2,
+      "questionCount": 27,
+      "charCount": 72872,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-mq",
+      "title": "消息队列",
+      "group": "高频面试题 · Java大神",
+      "order": 6,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 3,
+      "questionCount": 20,
+      "charCount": 63636,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-distributed",
+      "title": "分布式与微服务",
+      "group": "高频面试题 · Java大神",
+      "order": 7,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 4,
+      "questionCount": 30,
+      "charCount": 78059,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-cs-basic",
+      "title": "计算机基础",
+      "group": "高频面试题 · Java大神",
+      "order": 8,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 3,
+      "questionCount": 23,
+      "charCount": 69796,
+      "library": "jds"
+    },
+    {
+      "slug": "jds-soft",
+      "title": "系统设计与软技能",
+      "group": "高频面试题 · Java大神",
+      "order": 9,
+      "sourceUrl": "https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/",
+      "sourceUpdated": "",
+      "sectionCount": 5,
+      "questionCount": 38,
+      "charCount": 117608,
+      "library": "jds"
     }
   ]
 }

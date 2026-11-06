@@ -100,6 +100,14 @@ type Store struct {
 	// 用于给不同库分配不同的复习额度（算法一条要十几分钟，八股几分钟）。
 	libMu  sync.RWMutex
 	docLib map[string]string
+
+	// archived 是已退役题库的 docID 集合，同样由 server 从 manifest 注入。
+	//
+	// 归档库的进度与笔记全部保留，但**不再进入复习队列**：
+	// 换题库之后如果旧题还在抢每天的复习额度，新库的内容会被挤得排不上，
+	// 用户看到的就是「换了题库反而更复习不完」。
+	archMu   sync.RWMutex
+	archived map[string]bool
 }
 
 // Open 打开（必要时创建）SQLite 数据库。
@@ -115,7 +123,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // sqlite 单写者，串行化最省心
-	s := &Store{db: db, docLib: map[string]string{}}
+	s := &Store{db: db, docLib: map[string]string{}, archived: map[string]bool{}}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -393,6 +401,11 @@ var ErrNotFound = errors.New("记录不存在")
 const goalKey = "goal"
 
 // GetGoal 读取当前学习任务；没有设置过时返回 nil。
+//
+// 读出来时会剔除「已归档题库」的模块：换题库后旧 goal 里还留着旧库的 slug，
+// 若原样交出去，界面会显示一堆已经不再学的模块，计划里却一条都排不上 ——
+// 用户看到的是「勾了 9 个模块，进度条一动不动」。
+// 剔除后若一个模块都不剩，就当作没设置任务，让界面提示重新选。
 func (s *Store) GetGoal() (*Goal, error) {
 	raw, err := s.Meta(goalKey)
 	if err != nil {
@@ -405,6 +418,18 @@ func (s *Store) GetGoal() (*Goal, error) {
 	if err := json.Unmarshal([]byte(raw), &g); err != nil {
 		// 数据损坏时当作没有目标，不让整个快照接口失败。
 		return nil, nil
+	}
+	if len(s.archived) > 0 {
+		kept := make([]string, 0, len(g.DocSlugs))
+		for _, slug := range g.DocSlugs {
+			if !s.isArchived(slug) {
+				kept = append(kept, slug)
+			}
+		}
+		if len(kept) == 0 {
+			return nil, nil
+		}
+		g.DocSlugs = kept
 	}
 	return &g, nil
 }

@@ -44,7 +44,7 @@ async function submit() {
           学
         </div>
         <h1 class="text-xl font-semibold text-fg">学习进度</h1>
-        <p class="mt-1 text-sm text-fg-dim">小林coding 面试八股 · 私人在线笔记</p>
+        <p class="mt-1 text-sm text-fg-dim">后端面试题库 · 私人在线笔记</p>
       </div>
 
       <form class="card p-5" @submit.prevent="submit">
@@ -66,13 +66,21 @@ async function submit() {
       <p class="mt-6 text-center text-[11px] leading-relaxed text-fg-dim">
         内容版权归
         <a
-          href="https://xiaolincoding.com/"
+          href="https://javadashen.com/"
           target="_blank"
           rel="noopener noreferrer"
           class="text-accent hover:underline"
-          >小林coding</a
+          >Java大神</a
         >
-        所有，仅供个人学习使用。
+        、
+        <a
+          href="https://programmercarl.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-accent hover:underline"
+          >代码随想录</a
+        >
+        等原作者所有，仅供个人学习使用。
       </p>
     </div>
   </main>

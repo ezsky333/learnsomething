@@ -412,6 +412,10 @@ func crawlDoc(client *http.Client, spec docSpec, rawDir string) (model.Doc, []im
 			CharCount:     totalChars,
 			Library:       "interview",
 			ReadingList:   spec.ReadingList,
+			// 这套题库已经退役，八股改用 cmd/jdscrawler 抓的 javadashen.com。
+			// 这里显式标注，免得哪天重跑一次爬虫就把整批文档的归档标记冲掉 ——
+			// 那会让旧题库重新出现在主学习区，把新库的复习额度重新抢走。
+			Archived: true,
 		},
 		Intro:    strings.TrimSpace(introBuf.String()),
 		Sections: sections,

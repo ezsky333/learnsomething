@@ -12,18 +12,34 @@ import type { PlanAdvice, PlanDay, PlanLibInput, StudyPlan } from '@/types'
 /** 星期几的中文名，0=周日。 */
 export const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const
 
-/** 各内容库「学一条」的默认分钟数，和服务端默认值保持一致。 */
+/**
+ * 各内容库「学一条」的默认分钟数，和服务端默认值保持一致。
+ *
+ * jds 一条约 2900 字（是旧八股题 550 字的 5 倍多），读一遍加想一遍
+ * 差不多 9 分钟；旧库留着 5 分钟只是为了让归档内容的估算不变形。
+ */
 export const DEFAULT_MINUTES: Record<string, number> = {
+  jds: 9,
   interview: 5,
   algo: 25,
   ai: 8,
 }
 
+/**
+ * 各内容库的中文名。
+ *
+ * interview 是退役的旧八股题库，界面上仍然要能叫出名字 ——
+ * 归档 tab 里全是它，不该显示成裸的英文 key。
+ */
 export const LIBRARY_LABEL: Record<string, string> = {
-  interview: '八股',
+  jds: '八股',
+  interview: '八股（旧）',
   algo: '算法',
   ai: '大模型',
 }
+
+/** 主学习区里可选的库，顺序即展示顺序。 */
+export const STUDY_LIBRARIES = ['jds', 'algo', 'ai'] as const
 
 /** 把 YYYY-MM-DD 转成「3/5 周四」这种短标签。 */
 export function dayLabel(day: string): string {

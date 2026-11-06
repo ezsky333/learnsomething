@@ -1,4 +1,4 @@
-﻿package server
+package server
 
 import (
 	"encoding/json"
@@ -116,7 +116,7 @@ func TestProgressAndNotesViaAPI(t *testing.T) {
 	_, h := newTestServer(t)
 	cookie := login(t, h)
 
-	w := do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"概念","status":2}`, cookie)
+	w := do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"概念","status":2}`, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("保存进度失败: %d %s", w.Code, w.Body.String())
 	}
@@ -129,7 +129,7 @@ func TestProgressAndNotesViaAPI(t *testing.T) {
 	}
 
 	// 非法 status
-	if w := do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"x","status":9}`, cookie); w.Code != http.StatusBadRequest {
+	if w := do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"x","status":9}`, cookie); w.Code != http.StatusBadRequest {
 		t.Fatalf("非法 status 应 400，实际 %d", w.Code)
 	}
 	// 缺少字段
@@ -138,7 +138,7 @@ func TestProgressAndNotesViaAPI(t *testing.T) {
 	}
 
 	// 新建笔记
-	w = do(t, h, "POST", "/api/notes", `{"docId":"java","itemId":"概念","content":"这是一条笔记"}`, cookie)
+	w = do(t, h, "POST", "/api/notes", `{"docId":"jds-java-basic","itemId":"概念","content":"这是一条笔记"}`, cookie)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("新建笔记失败: %d %s", w.Code, w.Body.String())
 	}
@@ -148,7 +148,7 @@ func TestProgressAndNotesViaAPI(t *testing.T) {
 	}
 
 	// 空内容应拒绝
-	if w := do(t, h, "POST", "/api/notes", `{"docId":"java","itemId":"概念","content":"   "}`, cookie); w.Code != http.StatusBadRequest {
+	if w := do(t, h, "POST", "/api/notes", `{"docId":"jds-java-basic","itemId":"概念","content":"   "}`, cookie); w.Code != http.StatusBadRequest {
 		t.Fatalf("空笔记应 400，实际 %d", w.Code)
 	}
 
@@ -188,15 +188,17 @@ func TestContentEndpoints(t *testing.T) {
 			Slug        string `json:"slug"`
 			Library     string `json:"library"`
 			ReadingList bool   `json:"readingList"`
+			Archived    bool   `json:"archived"`
 		} `json:"docs"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
 		t.Fatal(err)
 	}
 
-	// 两个内容库都要在：小林coding 八股题 + 代码随想录算法教程。
+	// 两个内容库都要在：Java大神 高频面试题 + 代码随想录算法教程。
 	byLib := map[string]int{}
 	readingLists := 0
+	archived := 0
 	for _, d := range m.Docs {
 		if d.Slug == "" {
 			t.Fatal("存在没有 slug 的文档")
@@ -205,12 +207,20 @@ func TestContentEndpoints(t *testing.T) {
 		if d.ReadingList {
 			readingLists++
 		}
+		if d.Archived {
+			archived++
+		}
 	}
-	if byLib["interview"] < 24 {
-		t.Fatalf("应有至少 24 篇八股文档，实际 %d", byLib["interview"])
+	// 主八股库换成了 Java大神 高频面试题（9 个主题模块）。
+	if byLib["jds"] < 9 {
+		t.Fatalf("应有至少 9 篇新八股文档，实际 %d", byLib["jds"])
 	}
 	if byLib["algo"] < 14 {
 		t.Fatalf("应有至少 14 个算法专题，实际 %d", byLib["algo"])
+	}
+	// 旧的八股库要保留下来并标记归档：内容仍可读，但退出主学习区。
+	if archived < 20 {
+		t.Fatalf("应把旧八股库整体标记为归档，实际 %d 篇", archived)
 	}
 	// 「后端技术进阶之路」这类只含外链目录的文档要标记为阅读清单，
 	// 否则会把几十条几乎没有正文的条目算进学习任务的理论进度。
@@ -219,7 +229,7 @@ func TestContentEndpoints(t *testing.T) {
 	}
 
 	// 两个库各抽查一篇，确认能正常取到正文。
-	for _, slug := range []string{"java", "algo-array"} {
+	for _, slug := range []string{"jds-java-basic", "algo-array"} {
 		if w := do(t, h, "GET", "/api/content/docs/"+slug, "", nil); w.Code != http.StatusOK {
 			t.Fatalf("doc %s 应 200，实际 %d", slug, w.Code)
 		}
@@ -273,7 +283,7 @@ func TestGoalLifecycle(t *testing.T) {
 	}
 
 	// 创建任务（含重复 slug，应被去重）
-	body := `{"docSlugs":["java","java","algo-array"],"dueDay":"` + due + `","dailyTarget":0}`
+	body := `{"docSlugs":["jds-java-basic","jds-java-basic","algo-array"],"dueDay":"` + due + `","dailyTarget":0}`
 	w = do(t, h, "PUT", "/api/goal", body, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("创建任务失败: %d %s", w.Code, w.Body.String())
@@ -294,7 +304,7 @@ func TestGoalLifecycle(t *testing.T) {
 
 	// 重新设置时应保留原 createdAt
 	createdAt := g.CreatedAt
-	body2 := `{"docSlugs":["redis"],"dueDay":"` + due + `","dailyTarget":8}`
+	body2 := `{"docSlugs":["jds-jvm"],"dueDay":"` + due + `","dailyTarget":8}`
 	w = do(t, h, "PUT", "/api/goal", body2, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("更新任务失败: %d", w.Code)
@@ -344,11 +354,11 @@ func TestGoalValidation(t *testing.T) {
 		want int
 	}{
 		{"空模块", `{"docSlugs":[],"dueDay":"` + future + `"}`, http.StatusBadRequest},
-		{"缺截止日", `{"docSlugs":["java"]}`, http.StatusBadRequest},
-		{"日期格式错", `{"docSlugs":["java"],"dueDay":"2026/1/1"}`, http.StatusBadRequest},
-		{"日期不存在", `{"docSlugs":["java"],"dueDay":"2026-02-31"}`, http.StatusBadRequest},
-		{"过去日期", `{"docSlugs":["java"],"dueDay":"` + past + `"}`, http.StatusBadRequest},
-		{"负数每日目标", `{"docSlugs":["java"],"dueDay":"` + future + `","dailyTarget":-5}`, http.StatusBadRequest},
+		{"缺截止日", `{"docSlugs":["jds-java-basic"]}`, http.StatusBadRequest},
+		{"日期格式错", `{"docSlugs":["jds-java-basic"],"dueDay":"2026/1/1"}`, http.StatusBadRequest},
+		{"日期不存在", `{"docSlugs":["jds-java-basic"],"dueDay":"2026-02-31"}`, http.StatusBadRequest},
+		{"过去日期", `{"docSlugs":["jds-java-basic"],"dueDay":"` + past + `"}`, http.StatusBadRequest},
+		{"负数每日目标", `{"docSlugs":["jds-java-basic"],"dueDay":"` + future + `","dailyTarget":-5}`, http.StatusBadRequest},
 	}
 	for _, c := range cases {
 		if w := do(t, h, "PUT", "/api/goal", c.body, cookie); w.Code != c.want {
@@ -357,7 +367,7 @@ func TestGoalValidation(t *testing.T) {
 	}
 
 	// 未登录不能设置
-	if w := do(t, h, "PUT", "/api/goal", `{"docSlugs":["java"],"dueDay":"`+future+`"}`, nil); w.Code != http.StatusUnauthorized {
+	if w := do(t, h, "PUT", "/api/goal", `{"docSlugs":["jds-java-basic"],"dueDay":"`+future+`"}`, nil); w.Code != http.StatusUnauthorized {
 		t.Fatalf("未登录应 401，实际 %d", w.Code)
 	}
 }
@@ -380,7 +390,7 @@ func TestReviewPlanAndGrade(t *testing.T) {
 	cookie := login(t, h)
 
 	// 标记掌握 → 自动进入复习计划
-	if w := do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":2}`, cookie); w.Code != http.StatusOK {
+	if w := do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"q1","status":2}`, cookie); w.Code != http.StatusOK {
 		t.Fatalf("标记掌握失败: %d %s", w.Code, w.Body.String())
 	}
 
@@ -428,7 +438,7 @@ func TestReviewPlanAndGrade(t *testing.T) {
 	}
 
 	// 评分「记住」→ 进入下一阶段
-	w = do(t, h, "POST", "/api/review/grade", `{"docId":"java","itemId":"q1","grade":2}`, cookie)
+	w = do(t, h, "POST", "/api/review/grade", `{"docId":"jds-java-basic","itemId":"q1","grade":2}`, cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("评分失败: %d %s", w.Code, w.Body.String())
 	}
@@ -449,7 +459,7 @@ func TestReviewPlanAndGrade(t *testing.T) {
 	}
 	// 非法 grade
 	for _, g := range []string{"-1", "4", "99"} {
-		body := `{"docId":"java","itemId":"q1","grade":` + g + `}`
+		body := `{"docId":"jds-java-basic","itemId":"q1","grade":` + g + `}`
 		if w := do(t, h, "POST", "/api/review/grade", body, cookie); w.Code != http.StatusBadRequest {
 			t.Fatalf("grade=%s 应 400，实际 %d", g, w.Code)
 		}
@@ -498,7 +508,7 @@ func TestReviewDailyCapAPI(t *testing.T) {
 
 	// 关掉之后不应再入列
 	do(t, h, "PUT", "/api/review/config", `{"dailyCap":15,"enabled":false}`, cookie)
-	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q9","status":2}`, cookie)
+	do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"q9","status":2}`, cookie)
 	w = do(t, h, "GET", "/api/review", "", cookie)
 	plan = store.ReviewPlan{}
 	_ = json.Unmarshal(w.Body.Bytes(), &plan)
@@ -511,7 +521,7 @@ func TestReviewUndoneRemovesFromPlan(t *testing.T) {
 	_, h := newTestServer(t)
 	cookie := login(t, h)
 
-	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":2}`, cookie)
+	do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"q1","status":2}`, cookie)
 	w := do(t, h, "GET", "/api/review", "", cookie)
 	plan := store.ReviewPlan{}
 	_ = json.Unmarshal(w.Body.Bytes(), &plan)
@@ -520,7 +530,7 @@ func TestReviewUndoneRemovesFromPlan(t *testing.T) {
 	}
 
 	// 撤销已掌握 → 移出复习计划
-	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":0}`, cookie)
+	do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"q1","status":0}`, cookie)
 	w = do(t, h, "GET", "/api/review", "", cookie)
 	plan = store.ReviewPlan{}
 	_ = json.Unmarshal(w.Body.Bytes(), &plan)
@@ -533,13 +543,13 @@ func TestReviewResetAndClear(t *testing.T) {
 	_, h := newTestServer(t)
 	cookie := login(t, h)
 
-	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"q1","status":2}`, cookie)
+	do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"q1","status":2}`, cookie)
 	// 推进两轮
 	for i := 0; i < 2; i++ {
-		do(t, h, "POST", "/api/review/grade", `{"docId":"java","itemId":"q1","grade":2}`, cookie)
+		do(t, h, "POST", "/api/review/grade", `{"docId":"jds-java-basic","itemId":"q1","grade":2}`, cookie)
 	}
 
-	if w := do(t, h, "POST", "/api/review/reset", `{"docId":"java","itemId":"q1"}`, cookie); w.Code != http.StatusNoContent {
+	if w := do(t, h, "POST", "/api/review/reset", `{"docId":"jds-java-basic","itemId":"q1"}`, cookie); w.Code != http.StatusNoContent {
 		t.Fatalf("重置应 204，实际 %d %s", w.Code, w.Body.String())
 	}
 
@@ -585,7 +595,7 @@ func TestBackfillAPI(t *testing.T) {
 
 	// 标记两条已掌握（会自动入列）
 	for _, item := range []string{"q1", "q2"} {
-		do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"`+item+`","status":2}`, cookie)
+		do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"`+item+`","status":2}`, cookie)
 	}
 	// 清空复习计划，模拟「旧库升级」（表空但进度在）
 	do(t, h, "DELETE", "/api/review", "", cookie)
@@ -644,11 +654,11 @@ func TestGoalAcceptsWindows(t *testing.T) {
 	cookie := login(t, h)
 
 	due := time.Now().AddDate(0, 1, 0).Format("2006-01-02")
-	body := `{"docSlugs":["java","algo-array"],"dueDay":"` + due + `",
+	body := `{"docSlugs":["jds-java-basic","algo-array"],"dueDay":"` + due + `",
 		"dailyMinutes":150,
-		"minutesPerItem":{"interview":5,"algo":25},
+		"minutesPerItem":{"jds":9,"algo":25},
 		"windows":[{"name":"morning","minutes":60,"libs":["algo"]},
-		           {"name":"evening","minutes":90,"libs":["interview"]}]}`
+		           {"name":"evening","minutes":90,"libs":["jds"]}]}`
 
 	w := do(t, h, "PUT", "/api/goal", body, cookie)
 	if w.Code != http.StatusOK {
@@ -675,9 +685,9 @@ func TestGoalWindowValidation(t *testing.T) {
 	due := time.Now().AddDate(0, 1, 0).Format("2006-01-02")
 
 	cases := []struct{ name, body string }{
-		{"空名称", `{"docSlugs":["java"],"dueDay":"` + due + `","windows":[{"name":"","minutes":60}]}`},
-		{"负数分钟", `{"docSlugs":["java"],"dueDay":"` + due + `","windows":[{"name":"m","minutes":-1}]}`},
-		{"超长分钟", `{"docSlugs":["java"],"dueDay":"` + due + `","windows":[{"name":"m","minutes":2000}]}`},
+		{"空名称", `{"docSlugs":["jds-java-basic"],"dueDay":"` + due + `","windows":[{"name":"","minutes":60}]}`},
+		{"负数分钟", `{"docSlugs":["jds-java-basic"],"dueDay":"` + due + `","windows":[{"name":"m","minutes":-1}]}`},
+		{"超长分钟", `{"docSlugs":["jds-java-basic"],"dueDay":"` + due + `","windows":[{"name":"m","minutes":2000}]}`},
 	}
 	for _, c := range cases {
 		if w := do(t, h, "PUT", "/api/goal", c.body, cookie); w.Code != http.StatusBadRequest {
@@ -692,11 +702,11 @@ func TestPlanRespectsWindows(t *testing.T) {
 	cookie := login(t, h)
 
 	due := time.Now().AddDate(0, 3, 0).Format("2006-01-02")
-	body := `{"docSlugs":["java","algo-array"],"dueDay":"` + due + `",
+	body := `{"docSlugs":["jds-java-basic","algo-array"],"dueDay":"` + due + `",
 		"dailyMinutes":150,
-		"minutesPerItem":{"interview":5,"algo":25},
+		"minutesPerItem":{"jds":9,"algo":25},
 		"windows":[{"name":"morning","minutes":60,"libs":["algo"]},
-		           {"name":"evening","minutes":90,"libs":["interview"]}]}`
+		           {"name":"evening","minutes":90,"libs":["jds"]}]}`
 	if w := do(t, h, "PUT", "/api/goal", body, cookie); w.Code != http.StatusOK {
 		t.Fatalf("保存失败: %d %s", w.Code, w.Body.String())
 	}
@@ -749,15 +759,15 @@ func TestOverdueReviewsCountedInPlan(t *testing.T) {
 	// 造 10 条已掌握，并把复习日全部压到过去（模拟逾期积压）
 	for i := 0; i < 10; i++ {
 		item := "ov" + string(rune('a'+i))
-		do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"`+item+`","status":2}`, cookie)
+		do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"`+item+`","status":2}`, cookie)
 	}
 	srv2 := h // 直接用 API 无法改 due_day，这里改为验证「今天复习的条数」不为 0 即可
 	_ = srv2
 
 	// 设置任务，触发计划推算
 	due := time.Now().AddDate(0, 2, 0).Format("2006-01-02")
-	body := `{"docSlugs":["java"],"dueDay":"` + due + `","dailyMinutes":120,
-		"minutesPerItem":{"interview":5},"windows":[]}`
+	body := `{"docSlugs":["jds-java-basic"],"dueDay":"` + due + `","dailyMinutes":120,
+		"minutesPerItem":{"jds":9},"windows":[]}`
 	if w := do(t, h, "PUT", "/api/goal", body, cookie); w.Code != http.StatusOK {
 		t.Fatalf("保存任务失败: %d %s", w.Code, w.Body.String())
 	}
@@ -800,7 +810,7 @@ func TestTodayProgressExposed(t *testing.T) {
 	cookie := login(t, h)
 
 	// 造一条已掌握，推到今天到期并复习掉
-	do(t, h, "PUT", "/api/progress", `{"docId":"java","itemId":"t1","status":2}`, cookie)
+	do(t, h, "PUT", "/api/progress", `{"docId":"jds-java-basic","itemId":"t1","status":2}`, cookie)
 	today := time.Now().Format("2006-01-02")
 	w := do(t, h, "GET", "/api/review", "", cookie)
 	var plan store.ReviewPlan
@@ -809,8 +819,8 @@ func TestTodayProgressExposed(t *testing.T) {
 	do(t, h, "POST", "/api/review/backfill", "", cookie)
 
 	due := time.Now().AddDate(0, 2, 0).Format("2006-01-02")
-	body := `{"docSlugs":["java"],"dueDay":"` + due + `","dailyMinutes":120,
-		"minutesPerItem":{"interview":5}}`
+	body := `{"docSlugs":["jds-java-basic"],"dueDay":"` + due + `","dailyMinutes":120,
+		"minutesPerItem":{"jds":9}}`
 	if w := do(t, h, "PUT", "/api/goal", body, cookie); w.Code != http.StatusOK {
 		t.Fatalf("保存任务失败: %d", w.Code)
 	}
@@ -830,8 +840,8 @@ func TestTodayProgressExposed(t *testing.T) {
 	if resp.Today.ReviewCap <= 0 {
 		t.Fatalf("应带出复习上限，实际 %d", resp.Today.ReviewCap)
 	}
-	if resp.LibDone["interview"] != 1 {
-		t.Fatalf("已完成数应带出 1 条，实际 %d", resp.LibDone["interview"])
+	if resp.LibDone["jds"] != 1 {
+		t.Fatalf("已完成数应带出 1 条，实际 %d", resp.LibDone["jds"])
 	}
 	_ = today
 }

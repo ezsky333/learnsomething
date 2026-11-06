@@ -16,11 +16,16 @@ import {
   todayPercent,
 } from '@/utils/review'
 import type { GradeAction } from '@/utils/review'
-import { LIBRARY_LABEL } from '@/utils/plan'
+import { LIBRARY_LABEL, STUDY_LIBRARIES } from '@/utils/plan'
 import type { ReviewGrade, ReviewDayLoad, ReviewPlan } from '@/types'
 
-/** 各库默认每日复习额度，和服务端 DefaultLibCap 保持一致。 */
-const DEFAULT_LIB_CAP: Record<string, number> = { interview: 30, algo: 6, ai: 15 }
+/**
+ * 各库默认每日复习额度，和服务端 DefaultLibCap 保持一致。
+ *
+ * jds 一条约 2900 字、9 分钟，40 条就是 6 小时 —— 额度必须按时间而不是按条数给，
+ * 所以新八股库默认只有 16 条（约 145 分钟），和算法 6 条（约 90 分钟）同一量级。
+ */
+const DEFAULT_LIB_CAP: Record<string, number> = { jds: 16, interview: 30, algo: 6, ai: 15 }
 
 const content = useContentStore()
 const study = useStudyStore()
@@ -335,7 +340,7 @@ const toneClass: Record<GradeAction['tone'], string> = {
           </p>
           <div class="flex flex-wrap gap-3">
             <label
-              v-for="lib in ['interview', 'algo', 'ai']"
+              v-for="lib in STUDY_LIBRARIES"
               :key="lib"
               class="flex items-center gap-1.5"
             >

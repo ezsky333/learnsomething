@@ -10,14 +10,17 @@ export interface DocMeta {
   sectionCount: number
   questionCount: number
   charCount: number
-  /** interview = 小林coding 八股题；algo = 代码随想录算法教程；ai = 小林面试笔记大模型题库
+  /** jds = Java大神 高频面试题（当前八股主库）；algo = 代码随想录算法教程；
+   * ai = 小林面试笔记大模型题库；interview = 小林coding 八股（已归档）
    */
   library: Library
   /** 只是一份指向站外文章的目录，不计入学习任务的理论进度 */
   readingList?: boolean
+  /** 已退役的题库：仍可阅读、进度/笔记都保留，但不在主学习区，也不被新任务默认勾选 */
+  archived?: boolean
 }
 
-export type Library = 'interview' | 'algo' | 'ai'
+export type Library = 'jds' | 'interview' | 'algo' | 'ai'
 
 export interface Manifest {
   generatedAt: string

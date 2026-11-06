@@ -117,10 +117,17 @@ const (
 
 // DefaultLibCap 是各库的默认每日复习条数。
 //
-// 按「一条要多久」反推：40 条八股约 40 分钟，6 条算法约 45 分钟，
-// 两边投入的时间相当，才谈得上公平。
+// 按「一条要多久」反推，让各库的复习投入落在同一量级（约 45~55 分钟）：
+//
+//	interview 30 条 × 5 分钟  ≈ 150 分钟（旧题库，仅归档内容还在用）
+//	jds       16 条 × 9 分钟  ≈ 145 分钟
+//	algo       6 条 × 25 分钟 ≈ 150 分钟
+//	ai        15 条 × 8 分钟  ≈ 120 分钟
+//
+// 复习成本约为首次学习的 35%，所以实际每天花的时间还要再打三折。
 func DefaultLibCap() map[string]int {
 	return map[string]int{
+		"jds":       16,
 		"interview": 30,
 		"algo":      6,
 		"ai":        15,
@@ -382,29 +389,80 @@ func (s *Store) SetDocLibraries(m map[string]string) {
 	s.docLib = m
 }
 
-// libOf 返回某文档所属的库，未知时按八股处理（最保守的额度）。
+// SetArchivedDocs 注入「已归档题库」的 docID 集合。
+//
+// 归档的内容照常可读、进度笔记都在，但不再排进复习队列 ——
+// 换题库时用户要的是「从今天开始按新库复习」，
+// 而不是「新旧两套题一起压过来」。
+func (s *Store) SetArchivedDocs(m map[string]bool) {
+	s.archMu.Lock()
+	defer s.archMu.Unlock()
+	s.archived = m
+}
+
+// isArchived 判断某文档是否属于已归档题库。
+func (s *Store) isArchived(docID string) bool {
+	s.archMu.RLock()
+	defer s.archMu.RUnlock()
+	return s.archived[docID]
+}
+
+// archivedFilter 返回一条「排除归档文档」的 SQL 片段与参数。
+//
+// 复习表的查询散落在十几处，与其在每个 SQL 里手写 NOT IN，
+// 不如统一生成条件，免得漏改一处就把归档内容又捞回队列里。
+func (s *Store) archivedFilter() (string, []any) {
+	s.archMu.RLock()
+	defer s.archMu.RUnlock()
+	if len(s.archived) == 0 {
+		return "", nil
+	}
+	args := make([]any, 0, len(s.archived))
+	for id := range s.archived {
+		args = append(args, id)
+	}
+	q := ""
+	for i := range args {
+		if i == 0 {
+			q = " AND doc_id NOT IN (?"
+		} else {
+			q += ",?"
+		}
+	}
+	q += ")"
+	return q, args
+}
+
+// libOf 返回某文档所属的库；查不到时返回空串。
+//
+// 空串是一个刻意的「未知」标记，不是错误：libCapOf 对未知库返回
+// **全局** DailyCap，也就是不加额外限制。比随便挑一个库当默认值安全 ——
+// 猜成 jds（16 条）会让来源不明的文档被静默压到很低的复习量，
+// 用户只会看到「这些内容怎么从来不复习」，却找不到原因。
 func (s *Store) libOf(docID string) string {
 	s.libMu.RLock()
 	defer s.libMu.RUnlock()
-	if v, ok := s.docLib[docID]; ok && v != "" {
-		return v
-	}
-	return "interview"
+	return s.docLib[docID]
 }
 
 // dueCounts 统计指定几天的排定复习量，用于负载均衡。
+//
+// 归档题库的内容不计入负载：它们已经不排进队列了，
+// 若还算占用，新内容会被迫往更远的日子推，凭空拉长间隔。
 func (s *Store) dueCounts(days []string) (map[string]int, error) {
 	out := make(map[string]int, len(days))
 	if len(days) == 0 {
 		return out, nil
 	}
+	filter, fargs := s.archivedFilter()
 	q := `SELECT due_day, COUNT(*) FROM review WHERE graduated = 0 AND due_day IN (?`
 	args := []any{days[0]}
 	for _, d := range days[1:] {
 		q += `,?`
 		args = append(args, d)
 	}
-	q += `) GROUP BY due_day`
+	q += `)` + filter + ` GROUP BY due_day`
+	args = append(args, fargs...)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return out, err
@@ -616,9 +674,12 @@ func (s *Store) dueItems(day string) ([]ReviewItem, error) {
 // 提前复习用它：今天到期的永远优先，之后才是未来几天到期的，
 // 这样「提前看」不会把真正该补的积压挤到后面。
 func (s *Store) dueItemsUntil(day, until string) ([]ReviewItem, error) {
-	rows, err := s.db.Query(`SELECT `+reviewCols+` FROM review
-		WHERE graduated = 0 AND due_day <= ?
-		ORDER BY due_day ASC, stage ASC, lapses DESC, doc_id, item_id`, until)
+	filter, fargs := s.archivedFilter()
+	q := `SELECT ` + reviewCols + ` FROM review
+		WHERE graduated = 0 AND due_day <= ?` + filter + `
+		ORDER BY due_day ASC, stage ASC, lapses DESC, doc_id, item_id`
+	args := append([]any{until}, fargs...)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -839,9 +900,13 @@ func (s *Store) GetReview(docID, itemID string) (ReviewItem, error) {
 }
 
 // ActiveReviews 返回全部在籍（未毕业）的复习状态。
+//
+// 归档题库的内容不在其中：它们不该再占用每日复习额度，
+// 也不该出现在「今天该复习什么」里。
 func (s *Store) ActiveReviews() ([]ReviewItem, error) {
-	rows, err := s.db.Query(`SELECT ` + reviewCols + ` FROM review WHERE graduated = 0
-		ORDER BY due_day, doc_id, item_id`)
+	filter, fargs := s.archivedFilter()
+	rows, err := s.db.Query(`SELECT `+reviewCols+` FROM review WHERE graduated = 0`+
+		filter+` ORDER BY due_day, doc_id, item_id`, fargs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1003,11 +1068,15 @@ func (s *Store) ReviewPlanAhead(day string, ahead int) (ReviewPlan, error) {
 		Scan(&plan.Graduated); err != nil {
 		return plan, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM review WHERE graduated = 0`).
-		Scan(&plan.Enrolled); err != nil {
+	// 在籍量 / 积压只统计会真正被排期的内容：归档题库已退出复习池。
+	archFilter, archArgs := s.archivedFilter()
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM review WHERE graduated = 0`+archFilter,
+		archArgs...).Scan(&plan.Enrolled); err != nil {
 		return plan, err
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM review WHERE graduated = 0 AND due_day < ?`, day).
+	backlogArgs := append([]any{day}, archArgs...)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM review
+		WHERE graduated = 0 AND due_day < ?`+archFilter, backlogArgs...).
 		Scan(&plan.Backlog); err != nil {
 		return plan, err
 	}
@@ -1063,9 +1132,10 @@ func (s *Store) ReviewPlanAhead(day string, ahead int) (ReviewPlan, error) {
 		days = append(days, addDays(day, i))
 	}
 	end := days[len(days)-1]
+	fargs := append([]any{day, end}, archArgs...)
 	frows, err := s.db.Query(`SELECT due_day, COUNT(*) FROM review
-		WHERE graduated = 0 AND due_day >= ? AND due_day <= ?
-		GROUP BY due_day`, day, end)
+		WHERE graduated = 0 AND due_day >= ? AND due_day <= ?`+archFilter+`
+		GROUP BY due_day`, fargs...)
 	if err != nil {
 		return plan, err
 	}
@@ -1097,7 +1167,9 @@ func (s *Store) ReviewPlanAhead(day string, ahead int) (ReviewPlan, error) {
 	// 今天没事做时，告诉用户下次是哪天，而不是留一个空白页
 	if plan.DueTotal == 0 {
 		var next sql.NullString
-		if err := s.db.QueryRow(`SELECT MIN(due_day) FROM review WHERE graduated = 0 AND due_day > ?`, day).
+		nextArgs := append([]any{day}, archArgs...)
+		if err := s.db.QueryRow(`SELECT MIN(due_day) FROM review
+			WHERE graduated = 0 AND due_day > ?`+archFilter, nextArgs...).
 			Scan(&next); err == nil && next.Valid {
 			plan.NextDueDay = next.String
 		}

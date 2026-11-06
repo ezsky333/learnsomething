@@ -19,6 +19,9 @@ import (
 type Client struct {
 	HTTP   *http.Client
 	RawDir string // 原图落盘目录
+	// Referer 是下载图片时带的来源页。不同站点的图床防盗链规则不同，
+	// 留空时按老规矩推断（语雀走 yuque，其余走 xiaolincoding）。
+	Referer string
 }
 
 // New 创建抓取器。
@@ -145,9 +148,12 @@ func (c *Client) downloadOne(j Job) error {
 	req.Header.Set("User-Agent", browserUA)
 	req.Header.Set("Accept", "image/avif,image/webp,image/png,image/*,*/*;q=0.8")
 	// 语雀图床会把 xiaolincoding 的 Referer 当作盗链返回 403，其余图床带上原站 Referer。
-	if strings.Contains(j.URL, "nlark.com") || strings.Contains(j.URL, "yuque.com") {
+	switch {
+	case c.Referer != "":
+		req.Header.Set("Referer", c.Referer)
+	case strings.Contains(j.URL, "nlark.com") || strings.Contains(j.URL, "yuque.com"):
 		req.Header.Set("Referer", "https://www.yuque.com/")
-	} else {
+	default:
 		req.Header.Set("Referer", "https://xiaolincoding.com/")
 	}
 

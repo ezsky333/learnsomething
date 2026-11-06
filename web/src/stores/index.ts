@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia'
+import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/api/client'
 import type {
@@ -30,9 +30,15 @@ export const useContentStore = defineStore('content', () => {
     [...(manifest.value?.docs ?? [])].sort((a, b) => a.order - b.order),
   )
 
-  /** 按内容库筛选，默认八股题。 */
+  /** 按内容库筛选。 */
   const byLibrary = (library: Library) => docMetas.value.filter((d) => d.library === library)
 
+  /** 未归档的文档 —— 主学习区只认这些。 */
+  const activeDocs = computed(() => docMetas.value.filter((d) => !d.archived))
+  /** 已归档的文档（旧的八股题库），单独放在一个 tab 里只读查看。 */
+  const archivedDocs = computed(() => docMetas.value.filter((d) => d.archived))
+
+  const jdsDocs = computed(() => byLibrary('jds'))
   const interviewDocs = computed(() => byLibrary('interview'))
   const algoDocs = computed(() => byLibrary('algo'))
   const aiDocs = computed(() => byLibrary('ai'))
@@ -44,9 +50,11 @@ export const useContentStore = defineStore('content', () => {
   const totalChars = computed(() => docMetas.value.reduce((sum, d) => sum + d.charCount, 0))
 
   const groups = computed(() => groupBy(docMetas.value))
+  const jdsGroups = computed(() => groupBy(jdsDocs.value))
   const interviewGroups = computed(() => groupBy(interviewDocs.value))
   const algoGroups = computed(() => groupBy(algoDocs.value))
   const aiGroups = computed(() => groupBy(aiDocs.value))
+  const archivedGroups = computed(() => groupBy(archivedDocs.value))
 
   function groupBy(list: DocMeta[]) {
     const map = new Map<string, DocMeta[]>()
@@ -91,13 +99,18 @@ export const useContentStore = defineStore('content', () => {
     loading,
     error,
     docMetas,
+    activeDocs,
+    archivedDocs,
+    jdsDocs,
     interviewDocs,
     algoDocs,
     aiDocs,
     groups,
+    jdsGroups,
     interviewGroups,
     algoGroups,
     aiGroups,
+    archivedGroups,
     totalQuestions,
     totalChars,
     loadManifest,

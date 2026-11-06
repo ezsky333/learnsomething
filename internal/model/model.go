@@ -28,11 +28,15 @@ type DocMeta struct {
 	SectionCount  int    `json:"sectionCount"`
 	QuestionCount int    `json:"questionCount"`
 	CharCount     int    `json:"charCount"`
-	// Library 区分内容来源：interview（小林coding 八股）或 algo（代码随想录算法）。
+	// Library 区分内容来源：interview（小林coding 八股，已归档）、
+	// jds（Java大神 高频面试题）、algo（代码随想录算法）、ai（小林面试笔记大模型）。
 	Library string `json:"library"`
 	// ReadingList 表示这是一份「文章目录 / 阅读清单」而非完整题库：
 	// 条目只是指向站外文章的链接、正文极短，不应计入学习任务的理论进度。
 	ReadingList bool `json:"readingList,omitempty"`
+	// Archived 表示这套题库已经退役：内容和进度都保留可读，
+	// 但不再出现在主学习区，也不被新任务默认勾选。
+	Archived bool `json:"archived,omitempty"`
 }
 
 // Doc 是整篇学习文档。

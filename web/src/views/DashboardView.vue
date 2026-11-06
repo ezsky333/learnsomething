@@ -16,20 +16,24 @@ const route = useRoute()
 const router = useRouter()
 
 const LIB_KEY = 'ls-library'
-const LIBRARIES: Library[] = ['interview', 'algo', 'ai']
-const library = ref<Library>(readLibrary())
+/** 主学习区的三个 tab + 一个只读的归档 tab。 */
+type Tab = Library
+const LIBRARIES: Tab[] = ['jds', 'algo', 'ai', 'interview']
+const library = ref<Tab>(readLibrary())
 
-function readLibrary(): Library {
+function readLibrary(): Tab {
   const q = route.query.lib
-  if (q === 'algo' || q === 'interview' || q === 'ai') return q
+  if (q === 'algo' || q === 'ai' || q === 'jds') return q
+  // 旧的 interview 现在只在归档区出现，从地址栏进来也认，避免旧链接 404
+  if (q === 'interview') return 'interview'
   const saved = localStorage.getItem(LIB_KEY)
-  return LIBRARIES.includes(saved as Library) ? (saved as Library) : 'interview'
+  return LIBRARIES.includes(saved as Tab) ? (saved as Tab) : 'jds'
 }
 
 watch(library, (v) => {
   localStorage.setItem(LIB_KEY, v)
   const query = { ...route.query }
-  if (v === 'interview') delete query.lib
+  if (v === 'jds') delete query.lib
   else query.lib = v
   void router.replace({ query })
 })
@@ -53,14 +57,26 @@ const reviewBacklog = computed(() => review.value?.backlog ?? 0)
 const scopeDocs = computed(() => {
   if (library.value === 'algo') return content.algoDocs
   if (library.value === 'ai') return content.aiDocs
-  return content.interviewDocs
+  if (library.value === 'interview') return content.interviewDocs
+  return content.jdsDocs
 })
 
 const scopeGroups = computed(() => {
   if (library.value === 'algo') return content.algoGroups
   if (library.value === 'ai') return content.aiGroups
-  return content.interviewGroups
+  if (library.value === 'interview') return content.interviewGroups
+  return content.jdsGroups
 })
+
+/** 归档 tab：内容只读、不参与学习任务，界面要明说。 */
+const isArchived = computed(() => library.value === 'interview')
+
+const TABS = [
+  { k: 'jds', label: '面试八股', hint: 'Java大神' },
+  { k: 'algo', label: '算法教程', hint: '代码随想录' },
+  { k: 'ai', label: '大模型面试', hint: '小林面试笔记' },
+  { k: 'interview', label: '归档', hint: '小林coding 旧题库' },
+] as const
 
 interface DocRow extends DocMeta {
   done: number
@@ -113,6 +129,7 @@ const libraryStats = computed(() => {
     return { total, done, percent: total ? Math.round((done / total) * 100) : 0 }
   }
   return {
+    jds: calc(content.jdsDocs),
     interview: calc(content.interviewDocs),
     algo: calc(content.algoDocs),
     ai: calc(content.aiDocs),
@@ -134,6 +151,7 @@ const motivation = computed(() => {
   const p = overall.value.percent
   const algo = library.value === 'algo'
   const ai = library.value === 'ai'
+  if (isArchived.value) return '这是退役的旧题库，进度和笔记都还在，只作查阅 📚'
   if (p >= 100) {
     if (algo) return '算法全通了，去刷 Hot100 检验 🎯'
     if (ai) return '大模型题库全刷完了，去准备项目吧 🎯'
@@ -157,11 +175,7 @@ const motivation = computed(() => {
     <div class="mb-5 flex flex-wrap items-center gap-2">
       <div class="flex items-center gap-0.5 rounded-xl bg-panel-soft p-1">
         <button
-          v-for="lib in [
-            { k: 'interview', label: '面试八股', hint: '小林coding' },
-            { k: 'algo', label: '算法教程', hint: '代码随想录' },
-            { k: 'ai', label: '大模型面试', hint: '小林面试笔记' },
-          ]"
+          v-for="lib in TABS"
           :key="lib.k"
           class="group flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition-colors"
           :class="
@@ -169,14 +183,15 @@ const motivation = computed(() => {
               ? 'bg-panel font-semibold text-fg shadow-sm'
               : 'text-fg-dim hover:text-fg'
           "
-          @click="library = lib.k as Library"
+          :title="lib.hint"
+          @click="library = lib.k"
         >
           {{ lib.label }}
           <span
             class="rounded-full px-1.5 py-0.5 text-[10px] tabular-nums"
             :class="library === lib.k ? 'bg-accent-soft text-accent' : 'bg-line text-fg-dim'"
           >
-            {{ libraryStats[lib.k as Library].percent }}%
+            {{ libraryStats[lib.k].percent }}%
           </span>
         </button>
       </div>
@@ -184,8 +199,8 @@ const motivation = computed(() => {
         {{
           library === 'algo'
             ? '一篇长文 = 一条学习内容，读完再标记'
-            : library === 'ai'
-              ? '一道面试题 = 一条学习内容'
+            : library === 'interview'
+              ? '已归档：只读查阅，不计入学习任务'
               : '一道题 = 一条学习内容'
         }}
       </span>
@@ -285,12 +300,14 @@ const motivation = computed(() => {
     </section>
 
     <!-- 学习任务：今日应有进度 / 超前落后 -->
-    <section class="mt-4">
+    <!-- 归档 tab 里不显示任务与排期：那套内容已经退出学习计划，
+         在这里再显示「今天该学多少」只会让人以为归档题还得刷。 -->
+    <section v-if="!isArchived" class="mt-4">
       <GoalPanel />
     </section>
 
     <!-- 学习计划推算：目标是否现实 + 逐日排期 -->
-    <section v-if="study.goal" class="mt-4">
+    <section v-if="!isArchived && study.goal" class="mt-4">
       <PlanPanel />
     </section>
     <section v-for="group in grouped" :key="group.title" class="mt-8">
@@ -357,7 +374,9 @@ const motivation = computed(() => {
           ? '算法内容为空，请先运行 go run ./cmd/algocrawler'
           : library === 'ai'
             ? '大模型题库为空，请先运行 go run ./cmd/aicrawler'
-            : '内容为空，请先运行 go run ./cmd/crawler'
+            : library === 'interview'
+              ? '归档区为空'
+              : '八股题库为空，请先运行 go run ./cmd/jdscrawler'
       }}
     </p>
 
@@ -382,8 +401,8 @@ const motivation = computed(() => {
         >xiaolinnote.com</a>
         ，版权归原作者「小林面试笔记」所有，仅供个人学习。
       </template>
-      <template v-else>
-        内容抓取自
+      <template v-else-if="library === 'interview'">
+        归档内容抓取自
         <a
           href="https://xiaolincoding.com/interview/"
           target="_blank"
@@ -391,6 +410,16 @@ const motivation = computed(() => {
           class="text-accent hover:underline"
         >xiaolincoding.com</a>
         ，版权归原作者小林coding所有，仅供个人学习。
+      </template>
+      <template v-else>
+        内容抓取自
+        <a
+          href="https://javadashen.com/%E9%AB%98%E9%A2%91%E9%9D%A2%E8%AF%95%E9%A2%98/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-accent hover:underline"
+        >javadashen.com</a>
+        ，版权归原作者「Java大神」所有，仅供个人学习。
       </template>
     </footer>
   </main>

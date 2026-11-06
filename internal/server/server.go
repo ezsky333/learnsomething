@@ -58,10 +58,16 @@ func New(cfg config.Config, st *store.Store, content, web embed.FS) (*Server, er
 	// （算法一条复习十几分钟，八股几分钟，共用一个上限会让算法永远排不进去）。
 	if docs, err := contentDocs(content); err == nil {
 		libs := make(map[string]string, len(docs))
+		arch := map[string]bool{}
 		for slug, d := range docs {
 			libs[slug] = d.Library
+			if d.Archived {
+				arch[slug] = true
+			}
 		}
 		st.SetDocLibraries(libs)
+		// 归档题库退出复习池：进度和笔记都还在，但不再抢每日额度。
+		st.SetArchivedDocs(arch)
 	}
 	return s, nil
 }
@@ -408,7 +414,11 @@ var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 //
 // 算法一篇长文要读、要自己想、还要写代码验证，和「看一眼答案就懂」的
 // 八股题完全不是一个量级；用同一个数字排计划必然失真。
+//
+// jds 一条平均 2900 字（旧八股题只有 550 字），读完加想一遍按 9 分钟算；
+// interview 保留 5 分钟只是为了让归档内容的旧计划估算不变形。
 var defaultMinutesPerItem = map[string]int{
+	"jds":       9,
 	"interview": 5,
 	"algo":      25,
 	"ai":        8,
@@ -540,6 +550,12 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 	for _, slug := range goal.DocSlugs {
 		d, ok := docs[slug]
 		if !ok || d.ReadingList {
+			continue
+		}
+		// 归档的题库不再参与排期。旧的 goal 里可能还留着退役题库的 slug，
+		// 若继续按它算「剩余 652 条」，换库之后计划会凭空背上一座山 ——
+		// 而这批内容用户已经明确不打算再按题库刷了。
+		if d.Archived {
 			continue
 		}
 		done := doneBySlug[slug]
@@ -754,12 +770,22 @@ func onlyWindowOf(windows []store.PlanWindow, lib string) string {
 //
 // 算法一条复习要十几分钟，若和八股共用 40 条的额度，
 // 光复习就吃掉整天时间，新内容永远推不动。
+//
+// 换算基准是「时间」而不是「条数」：
+//
+//	algo  6 条 × 25 分钟 × 35% ≈ 52 分钟
+//	jds  16 条 ×  9 分钟 × 35% ≈ 50 分钟
+//	ai   15 条 ×  8 分钟 × 35% ≈ 42 分钟
+//
+// 三个库的复习投入相当，才不会出现「八股挤满下午、算法一条都排不上」。
 func defaultReviewCap(library string) int {
 	switch library {
 	case "algo":
 		return 6
 	case "ai":
 		return 15
+	case "jds":
+		return 16
 	default:
 		return 30
 	}
@@ -767,18 +793,19 @@ func defaultReviewCap(library string) int {
 
 // docLibrary 查出某篇文档属于哪个内容库。
 func docLibrary(docs map[string]docMetaLite, slug string) string {
-	if d, ok := docs[slug]; ok {
+	if d, ok := docs[slug]; ok && d.Library != "" {
 		return d.Library
 	}
-	return "interview"
+	return "jds"
 }
 
 // docMetaLite 是计划推算需要的文档元信息。
 type docMetaLite struct {
-	Slug         string `json:"slug"`
-	Library      string `json:"library"`
-	QuestionCount int   `json:"questionCount"`
-	ReadingList  bool   `json:"readingList"`
+	Slug          string `json:"slug"`
+	Library       string `json:"library"`
+	QuestionCount int    `json:"questionCount"`
+	ReadingList   bool   `json:"readingList"`
+	Archived      bool   `json:"archived"`
 }
 
 // contentDocs 从已缓存的 manifest 解析出 slug → 元信息。

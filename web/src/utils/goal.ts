@@ -102,7 +102,8 @@ export interface ModuleProgress {
 
 /** 内容库的中文名，用于按库聚合时的标题。 */
 export const LIBRARY_NAME: Record<string, string> = {
-  interview: '八股',
+  jds: '八股',
+  interview: '八股（旧）',
   algo: '算法',
   ai: '大模型',
 }
@@ -243,8 +244,8 @@ export function computeModuleProgress(
         minutesPerDay: libMinutes,
       })
     }
-    // 算法在前、八股在后，和实际作息顺序一致
-    const order = ['algo', 'interview', 'ai']
+    // 算法在前、八股在后，和实际作息顺序一致；归档的旧题库排最后。
+    const order = ['algo', 'jds', 'ai', 'interview']
     out.sort((a, b) => order.indexOf(a.library) - order.indexOf(b.library))
     return out
   }

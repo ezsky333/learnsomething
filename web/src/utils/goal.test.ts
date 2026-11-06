@@ -379,9 +379,30 @@ test('有时间窗时，各库额度按自己那段时间算，而不是全天�
   if (mods.length !== 2) {
     throw new Error(`按库聚合应只有 2 行，实际 ${mods.length}`)
   }
-  // 行标题是人话，不是 slug
-  if (algo.title !== '算法' || iv.title !== '八股') {
+  // 行标题是人话，不是 slug。
+  // interview 是退役的旧八股库，标题必须带「旧」字标出来，
+  // 否则用户会以为它还是当前在学的那套八股。
+  if (algo.title !== '算法' || iv.title !== '八股（旧）') {
     throw new Error(`标题应可读：${algo.title} / ${iv.title}`)
+  }
+})
+
+test('新八股库（jds）在按库聚合时标题是「八股」', () => {
+  const docs = [docLib('jds-spring', 43, 'jds'), docLib('algo-array', 9, 'algo')]
+  const g = goalMin(['jds-spring', 'algo-array'], dayOffset(-1), dayOffset(30), 190)
+  g.windows = [
+    { name: 'morning', minutes: 100, libs: ['algo'], reviewOnly: false },
+    { name: 'evening', minutes: 90, libs: ['jds'], reviewOnly: false },
+  ]
+  const mods = computeModuleProgress(g, docs, () => 0, { jds: 9, algo: 25 })
+  const jds = mods.find((m) => m.slug === 'lib:jds')
+  if (!jds) throw new Error('应有一行 jds 汇总')
+  if (jds.title !== '八股') {
+    throw new Error(`jds 标题应为「八股」，实际 ${jds.title}`)
+  }
+  // 90 / 9 = 10 条/天
+  if (Math.abs(jds.dailyTarget - 10) > 0.01) {
+    throw new Error(`八股应每天 10 条，实际 ${jds.dailyTarget}`)
   }
 })
 

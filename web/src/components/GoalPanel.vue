@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useContentStore, useStudyStore } from '@/stores'
 import { computeGoalProgress, daysBetween, formatDay, paceOf, today } from '@/utils/goal'
 import type { ModuleProgress, PaceLevel } from '@/utils/goal'
-import { DEFAULT_MINUTES, LIBRARY_LABEL, WEEKDAYS } from '@/utils/plan'
+import { DEFAULT_MINUTES, LIBRARY_LABEL, STUDY_LIBRARIES, WEEKDAYS } from '@/utils/plan'
 import type { DocMeta, PlanDay, PlanWindow } from '@/types'
 
 const content = useContentStore()
@@ -28,11 +28,11 @@ const advancedOpen = ref(false)
 const draftWindows = ref<PlanWindow[]>([])
 const windowsOpen = ref(false)
 
-/** 默认时间窗：上午 60 分（只算法）、下午 90 分（复习+其余）。 */
+/** 默认时间窗：上午 60 分（只算法）、下午 90 分（复习+八股）。 */
 function defaultWindows(): PlanWindow[] {
   return [
     { name: 'morning', minutes: 60, libs: ['algo'], reviewOnly: false },
-    { name: 'evening', minutes: 90, libs: ['interview', 'ai'], reviewOnly: false },
+    { name: 'evening', minutes: 90, libs: ['jds', 'ai'], reviewOnly: false },
   ]
 }
 
@@ -152,10 +152,10 @@ function toggleWeekday(w: number) {
   else draftWeeklyRest.value.push(w)
 }
 
-/** 按库分组列出可勾选的模块 */
+/** 按库分组列出可勾选的模块（归档的旧题库不参与新任务）。 */
 const moduleGroups = computed(() => {
   const groups = new Map<string, DocMeta[]>()
-  for (const doc of content.docMetas) {
+  for (const doc of content.activeDocs) {
     const list = groups.get(doc.group) ?? []
     list.push(doc)
     groups.set(doc.group, list)
@@ -771,7 +771,7 @@ function modulePaceText(m: ModuleProgress): string {
             <div v-if="!w.reviewOnly" class="mt-1 flex flex-wrap items-center gap-1">
               <span class="text-[10px] text-fg-dim">学哪些：</span>
               <button
-                v-for="lib in ['interview', 'algo', 'ai']"
+                v-for="lib in STUDY_LIBRARIES"
                 :key="lib"
                 class="rounded px-1.5 py-0.5 text-[10px] transition-colors"
                 :class="

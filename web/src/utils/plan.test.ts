@@ -1,4 +1,4 @@
-﻿import { test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
@@ -74,14 +74,22 @@ test('WEEKDAYS 从周日开始，和 JS 的 getDay 对齐', () => {
 })
 
 test('各库默认单价里算法明显高于八股', () => {
-  assert.ok(DEFAULT_MINUTES.algo > DEFAULT_MINUTES.interview)
+  assert.ok(DEFAULT_MINUTES.algo > DEFAULT_MINUTES.jds)
   assert.ok(DEFAULT_MINUTES.algo >= 20)
+  // 新八股库一条近 3000 字，单价得高于旧库的 5 分钟，
+  // 否则计划会以为「一天能刷几十条」，把下午排成不可能完成的任务。
+  assert.ok(DEFAULT_MINUTES.jds > DEFAULT_MINUTES.interview)
+  assert.ok(DEFAULT_MINUTES.jds >= 8)
 })
 
-test('LIBRARY_LABEL 覆盖三个库', () => {
-  for (const lib of ['interview', 'algo', 'ai']) {
+test('LIBRARY_LABEL 覆盖新旧四个库（归档库也要有名字）', () => {
+  for (const lib of ['jds', 'interview', 'algo', 'ai']) {
     assert.ok(LIBRARY_LABEL[lib])
   }
+})
+
+test('大模型库的默认单价保持不变', () => {
+  assert.equal(DEFAULT_MINUTES.ai, 8)
 })
 
 // ---------- 日期 ----------
