@@ -321,6 +321,14 @@ const startedAgo = computed(() => {
   return daysBetween(start, today()) + 1
 })
 
+/**
+ * 任务里引用了、但已经归档的模块。
+ *
+ * 换题库后旧任务必然残留退役题库的 slug，服务端已经把它们剔除出排期，
+ * 但必须在这里说清楚 —— 否则用户会发现「八股怎么没了」却找不到原因。
+ */
+const archivedRefs = computed(() => study.goal?.archivedRefs ?? [])
+
 /** 有排期时用它，没有则退回线性估算。 */
 const hasPlan = computed(() => planToday.value !== null)
 
@@ -464,6 +472,14 @@ function modulePaceText(m: ModuleProgress): string {
 
     <!-- 已设置任务：显示今日安排 / 差距 -->
     <template v-if="study.goal && !open">
+      <!-- 换了题库后旧任务会残留归档模块，必须明确提示 -->
+      <p
+        v-if="archivedRefs.length"
+        class="mb-3 rounded-lg bg-amber-glow/10 px-3 py-2 text-[11px] leading-relaxed text-amber-glow"
+      >
+        任务里有 {{ archivedRefs.length }} 个模块已经归档（旧八股题库），
+        已自动移出排期。点「调整」重新勾选当前题库的模块即可。
+      </p>
       <!-- 有逐日排期时：一切以排期为准（唯一权威） -->
       <template v-if="hasPlan">
         <div class="grid grid-cols-3 gap-2 text-center">

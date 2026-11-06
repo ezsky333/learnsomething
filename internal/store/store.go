@@ -68,8 +68,14 @@ type Goal struct {
 	// 为空时退化为「一天一个总预算」。真实场景里时间窗是硬约束：
 	// 算法必须脑子清醒时啃，不能摊到全天。
 	Windows []PlanWindow `json:"windows"`
-	CreatedAt string     `json:"createdAt"`
-	UpdatedAt string     `json:"updatedAt"`
+	// ArchivedRefs 是「任务里引用了、但已经归档」的模块 slug。
+	//
+	// 不落库，读出时现算：换题库后旧 goal 里还留着退役题库的 slug，
+	// 若默默剔除，用户只会发现八股从计划里凭空消失了，却不知道为什么。
+	// 记下来是为了让界面能明确提示「这些模块已归档，建议重选」。
+	ArchivedRefs []string `json:"archivedRefs,omitempty"`
+	CreatedAt    string   `json:"createdAt"`
+	UpdatedAt    string   `json:"updatedAt"`
 }
 
 // PlanWindow 是一个每日时间窗。
@@ -422,9 +428,11 @@ func (s *Store) GetGoal() (*Goal, error) {
 	if len(s.archived) > 0 {
 		kept := make([]string, 0, len(g.DocSlugs))
 		for _, slug := range g.DocSlugs {
-			if !s.isArchived(slug) {
-				kept = append(kept, slug)
+			if s.isArchived(slug) {
+				g.ArchivedRefs = append(g.ArchivedRefs, slug)
+				continue
 			}
+			kept = append(kept, slug)
 		}
 		if len(kept) == 0 {
 			return nil, nil

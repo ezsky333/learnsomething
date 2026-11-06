@@ -97,6 +97,13 @@ export interface Goal {
   minutesPerItem: Record<string, number>
   /** 每日时间窗；为空时按「一天一个总时间」算 */
   windows?: PlanWindow[]
+  /**
+   * 任务里引用过、但已经归档的模块 slug。
+   *
+   * 换题库后旧任务还留着退役题库的名字，服务端读出来时会剔除并记在这里。
+   * 界面要据此明确提示「这些模块已归档」，而不是让八股从计划里静默消失。
+   */
+  archivedRefs?: string[]
   createdAt: string
   updatedAt: string
 }

@@ -820,6 +820,9 @@ type BackfillResult struct {
 // 学过的内容早就该复习了，把它们全压在今天会瞬间制造几百条的积压，
 // 直接违反「不至于每天堆积太多」的设计前提。按 done_day + 首轮间隔计算，
 // 该逾期就逾期（用户能看到真实欠账），但同时用负载均衡摊到相邻几天。
+//
+// 归档题库不入列：它们已经退出复习池，补进来只会占表、占负载统计，
+// 让本该排给新内容的日子被一群不会被复习的条目挡住。
 func (s *Store) BackfillReviews(today string) (BackfillResult, error) {
 	if today == "" {
 		today = time.Now().Format(dayLayout)
@@ -842,6 +845,9 @@ func (s *Store) BackfillReviews(today string) (BackfillResult, error) {
 			rows.Close()
 			return res, err
 		}
+		if s.isArchived(r.docID) {
+			continue
+		}
 		pendingRows = append(pendingRows, r)
 	}
 	rows.Close()
@@ -856,12 +862,15 @@ func (s *Store) BackfillReviews(today string) (BackfillResult, error) {
 	gaps := s.stageGaps(today, cfg)
 	firstGap := gapOf(gaps, 0)
 
-	// 统计总已掌握数（含已在计划里的），用于回报
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM progress WHERE status = ?`, StatusDone).
-		Scan(&res.Total); err != nil {
+	// 统计总已掌握数（含已在计划里的），用于回报。
+	// 归档题库不算进 Total：它们被有意排除在补录之外，
+	// 算进去会让界面报出「跳过 652 条」这种吓人又无意义的数字。
+	archTotal, archArgs := s.archivedFilter()
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM progress WHERE status = ?`+archTotal,
+		append([]any{StatusDone}, archArgs...)...).Scan(&res.Total); err != nil {
 		return res, err
 	}
-	res.Skipped = res.Total - len(pendingRows)
+	res.Skipped += res.Total - len(pendingRows)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, r := range pendingRows {
