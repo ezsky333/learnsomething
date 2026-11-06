@@ -604,6 +604,7 @@ func (s *Server) handleStudyPlan(w http.ResponseWriter, r *http.Request) {
 			Name:       w.Name,
 			Minutes:    w.Minutes,
 			ReviewOnly: w.ReviewOnly,
+			NewOnly:    w.NewOnly,
 			Libs:       w.Libs,
 		})
 	}

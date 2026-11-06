@@ -97,6 +97,15 @@ type Window struct {
 	Minutes int `json:"minutes"`
 	// ReviewOnly 为 true 时该窗口只做复习，不学新内容。
 	ReviewOnly bool `json:"reviewOnly"`
+	// NewOnly 为 true 时该窗口只学新内容，不还复习债。
+	//
+	// 这是真实作息里最常见的形态，而且和 ReviewOnly 并不对称：
+	// 上午脑子最清醒，用来啃新算法（学新比复习更吃力）；
+	// 复习是重做已经过一遍的东西，放到下午照样做得动。
+	// 没有这个开关时，算法复习会先把上午的 60 分钟吃光，
+	// 结果就是「每天都在复习，一条新算法都推不动」——
+	// 看上去像是学不完，其实是窗口被复习占满了。
+	NewOnly bool `json:"newOnly"`
 	// Libs 非空时，该窗口只处理这些库的复习。
 	Libs []string `json:"libs"`
 }
@@ -480,24 +489,28 @@ func simWindows(day string, in Input, libs map[string]LibInput, order []string,
 
 		// ---- 1. 本窗先还复习债 ----
 		// 同 simPlain：复习不受预算截断，宁可当天不学新内容。
+		// NewOnly 的窗跳过这一步：它存在的意义就是「整段时间留给新内容」，
+		// 让它顺手还复习债，等于又回到「复习吃光上午」的老问题。
 		used := 0
 		perLib := map[string]int{}
-		for _, i := range due {
-			if taken[i] {
-				continue
+		if !w.NewOnly {
+			for _, i := range due {
+				if taken[i] {
+					continue
+				}
+				p := pend[i]
+				if !libFits(p.lib) {
+					continue
+				}
+				cfg := libs[p.lib]
+				if cfg.ReviewCap > 0 && perLib[p.lib] >= cfg.ReviewCap {
+					continue
+				}
+				used += reviewCost(cfg, p.stage)
+				perLib[p.lib]++
+				taken[i] = true
+				reviewByLib[p.lib]++
 			}
-			p := pend[i]
-			if !libFits(p.lib) {
-				continue
-			}
-			cfg := libs[p.lib]
-			if cfg.ReviewCap > 0 && perLib[p.lib] >= cfg.ReviewCap {
-				continue
-			}
-			used += reviewCost(cfg, p.stage)
-			perLib[p.lib]++
-			taken[i] = true
-			reviewByLib[p.lib]++
 		}
 		totalReview += used
 

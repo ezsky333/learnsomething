@@ -78,6 +78,13 @@ export interface PlanWindow {
   libs: string[]
   /** 只做复习，不学新内容 */
   reviewOnly: boolean
+  /**
+   * 只学新内容，不还复习债。
+   *
+   * 「上午留给新算法」就必须开这个：否则算法复习会先把上午吃光，
+   * 结果是每天忙到深夜却一条新算法都没推进。
+   */
+  newOnly?: boolean
 }
 
 /** 学习任务：选中的模块 + 截止日期 + 每天的可用时间。 */

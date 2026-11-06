@@ -28,11 +28,11 @@ const advancedOpen = ref(false)
 const draftWindows = ref<PlanWindow[]>([])
 const windowsOpen = ref(false)
 
-/** 默认时间窗：上午 60 分（只算法）、下午 90 分（复习+八股）。 */
+/** 默认时间窗：上午 60 分只学新算法（不还复习债）、下午 90 分复习+八股。 */
 function defaultWindows(): PlanWindow[] {
   return [
-    { name: 'morning', minutes: 60, libs: ['algo'], reviewOnly: false },
-    { name: 'evening', minutes: 90, libs: ['jds', 'ai'], reviewOnly: false },
+    { name: 'morning', minutes: 60, libs: ['algo'], reviewOnly: false, newOnly: true },
+    { name: 'evening', minutes: 90, libs: ['jds', 'algo'], reviewOnly: false },
   ]
 }
 
@@ -777,6 +777,14 @@ function modulePaceText(m: ModuleProgress): string {
                 <input v-model="w.reviewOnly" type="checkbox" class="h-3 w-3 accent-[var(--color-accent)]" />
                 只复习
               </label>
+              <label
+                v-if="!w.reviewOnly"
+                class="flex items-center gap-1 text-[10px] text-fg-dim"
+                title="这段时间只推进新内容，复习挪到别的时段"
+              >
+                <input v-model="w.newOnly" type="checkbox" class="h-3 w-3 accent-[var(--color-accent)]" />
+                只学新
+              </label>
               <button
                 class="ml-auto text-[10px] text-fg-dim hover:text-red-500"
                 @click="removeWindow(i)"
@@ -806,8 +814,8 @@ function modulePaceText(m: ModuleProgress): string {
             + 加一个时间段
           </button>
           <p class="text-[10px] leading-relaxed text-fg-dim">
-            只有「学哪些」里勾选的库能在这个时间段学新内容。算法建议只放上午 ——
-            下午脑子钝的时候啃算法，效率会很低。
+            只有「学哪些」里勾选的库能在这个时间段学新内容。「只学新」勾上后这段时间
+            不还复习债 —— 上午留给新算法就该这样，否则算法复习会先把上午吃光。
           </p>
         </div>
       </div>

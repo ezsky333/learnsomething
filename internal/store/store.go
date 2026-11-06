@@ -87,6 +87,9 @@ type PlanWindow struct {
 	Libs []string `json:"libs"`
 	// ReviewOnly 为 true 时该窗只做复习。
 	ReviewOnly bool `json:"reviewOnly"`
+	// NewOnly 为 true 时该窗只学新内容，不还复习债。
+	// 上午那段留给新算法就是这个用法：复习能挪到下午，新算法不能。
+	NewOnly bool `json:"newOnly"`
 }
 
 // Snapshot 是一次全量同步的载荷。
