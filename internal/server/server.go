@@ -501,6 +501,13 @@ func (s *Server) handlePutGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.bumpRevision()
+	// 回读一次再返回：SetGoal 存的是请求原样（含归档模块），
+	// 而 GetGoal 会剔除归档并填 archivedRefs。直接返回 goal 会让前端
+	// 拿到的和 /api/snapshot 不一致 —— 保存完页面上还挂着已归档的模块，
+	// 刷新一下才消失，看起来像没保存成功。
+	if saved, err := s.store.GetGoal(); err == nil && saved != nil {
+		goal = saved
+	}
 	writeJSON(w, http.StatusOK, goal)
 }
 
